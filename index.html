@@ -54,8 +54,8 @@ kbd{font-family:var(--display);font-size:11px;color:var(--ink);border:1px solid 
   </div>
   <div class="legend">
     <div><b>Move</b> <kbd>←</kbd> <kbd>→</kbd> or <kbd>A</kbd> <kbd>D</kbd><br><b>Duck</b> <kbd>↓</kbd> &nbsp; <b>Jump</b> <kbd>Z</kbd> / <kbd>Space</kbd><br><b>Fire</b> <kbd>X</kbd> / <kbd>J</kbd> (3 shots on screen)</div>
-    <div><b>Stairs</b> stand at a building edge, hold <kbd>↑</kbd> / <kbd>↓</kbd><br><b>Lift</b> step inside a stopped car, hold <kbd>↑</kbd> / <kbd>↓</kbd><br><b>Red door</b> stand in front, <kbd>↑</kbd> to grab the file</div>
-    <div><b>Tricks</b> duck under high shots, jump low ones; jump into enemies to kick; jump-fire at a lamp to drop it; lower a car onto anyone in the pit, or carry them on its roof into the shaft ceiling.<br><kbd>P</kbd> pause &nbsp; <kbd>M</kbd> sound</div>
+    <div><b>Stairs</b> stand at a building edge, hold <kbd>↑</kbd> / <kbd>↓</kbd><br><b>Lift</b> step inside a stopped car, hold <kbd>↑</kbd> / <kbd>↓</kbd><br><b>Red door</b> stand in front, <kbd>↑</kbd> to grab the file<br><b>Blue door</b> <kbd>↑</kbd> to hide inside, <kbd>↓</kbd> to step out</div>
+    <div><b>Tricks</b> duck under high shots, jump low ones; jump into enemies to kick; jump-fire at a lamp to drop it; lower a car onto anyone in the pit, or carry them on its roof into the shaft ceiling.<br><kbd>P</kbd> pause &nbsp; <kbd>M</kbd> sound &nbsp; <kbd>N</kbd> music</div>
   </div>
 </div>
 
@@ -202,6 +202,7 @@ const G = { state: 'title', level: 1, score: 0, hi: 0, lives: 3, nextLife: 20000
   kills: 0, total: 0, files: 0, filesTotal: 0, alarm: false, alarmT: 0, alarmMax: 1, hunt: false, cleared: false, reinf: 0, reinfT: 0, spawnCd: 0,
   banner: null, introT: 0, escapeT: 0, levelT: 0, interT: 0, stats: null, paused: false, muted: false, t: 0, shake: 0 };
 try { G.hi = +localStorage.getItem('liftprotocol.hi') || 0; } catch (e) {}
+try { G.muted = localStorage.getItem('liftprotocol.muted') === '1'; G.musicOff = localStorage.getItem('liftprotocol.music') === 'off'; } catch (e) {}
 
 const floorY = k => SKY + (N - k) * FH;
 const floorOfY = y => Math.round((SKY + N * FH - y) / FH);
@@ -425,7 +426,7 @@ function updateGameOver(dt) {
 // ───────────────────────────── input ─────────────────────────────
 const keys = {}, pressed = {};
 const KEYMAP = { ArrowLeft:'left', KeyA:'left', ArrowRight:'right', KeyD:'right', ArrowUp:'up', KeyW:'up', ArrowDown:'down', KeyS:'down',
-  KeyZ:'jump', Space:'jump', KeyK:'jump', KeyX:'fire', KeyJ:'fire', KeyP:'pause', Escape:'pause', Enter:'start', KeyM:'mute' };
+  KeyZ:'jump', Space:'jump', KeyK:'jump', KeyX:'fire', KeyJ:'fire', KeyP:'pause', Escape:'pause', Enter:'start', KeyM:'mute', KeyN:'music' };
 addEventListener('keydown', e => {
   const k = KEYMAP[e.code]; if (!k) return;
   e.preventDefault(); audioInit();
@@ -444,7 +445,12 @@ document.querySelectorAll('#touch button').forEach(b => {
 
 // ───────────────────────────── audio ─────────────────────────────
 let AC = null;
-function audioInit() { if (AC) return; try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { AC = null; } }
+function audioInit() {
+  if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { AC = null; } }
+  if (!AC) return;
+  if (AC.state === 'suspended') AC.resume();
+  if (!G.muted && !G.musicOff && !Music.playing) Music.start(AC);
+}
 function tone(f, d, type, vol, slide) {
   if (!AC || G.muted) return;
   const t = AC.currentTime, o = AC.createOscillator(), g = AC.createGain();
@@ -471,6 +477,293 @@ function sfx(n) {
     case 'block': tone(1200, 0.06, 'triangle', 0.05, 400); break;
   }
 }
+
+// ───────────────────────────── music: "Top Floor Strut" ─────────────────────────────
+// An original 8-bit funk loop, composed and synthesized right here: stepped-triangle bass, pulse-wave wah guitar,
+// horns and lead, LFSR-noise drums, crushed to 8 bits. Rendered 4 bars at a time just ahead of playback.
+const Music = (() => {
+  const MSR = 22050, BPM = 106, STEP = 60 / BPM / 4, SWING = 0.16, BAR = STEP * 16, SEG = 4, TAIL = 2.6, VOL = 0.42;
+  const MASTER = 0.95 / 2.11, PI = Math.PI;
+  const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
+  const stepT = st => st * STEP + (st % 2 === 1 ? SWING * STEP : 0);
+  const cl = (v, a, b) => v < a ? a : v > b ? b : v;
+  const vol4 = v => Math.round(cl(v, 0, 1) * 15) / 15;
+  const envad = (t, a, d, s) => t < a ? t / a : s + (1 - s) * Math.exp(-(t - a) / d);
+  const triStep = ph => Math.round((2 - 4 * Math.abs(ph - 0.5)) * 7.5) / 7.5 - 1;
+  function lfsr(n, short) {
+    const o = new Float32Array(n); let reg = 1; const tap = short ? 6 : 1;
+    for (let i = 0; i < n; i++) { const fb = (reg & 1) ^ ((reg >> tap) & 1); reg = (reg >> 1) | (fb << 14); o[i] = reg & 1 ? 1 : -1; }
+    return o;
+  }
+  const NZ = lfsr(MSR, false), NM = lfsr(MSR, true);
+  const GAIN = { bass: .62, gtr: .30, horn: .24, lead: .30, kick: .75, snare: .42, hat: .20, clav: .2 };
+  const PAN = { bass: 0, gtr: -.35, horn: .25, lead: .1, kick: 0, snare: .05, hat: .4, clav: -.5 };
+  let L = null, R = null;
+  function mix(ch, t0, sig) {
+    const i0 = Math.round(t0 * MSR), g = GAIN[ch], p = PAN[ch], gl = g * (1 - Math.max(0, p)), gr = g * (1 + Math.min(0, p));
+    const n = Math.min(sig.length, L.length - i0);
+    for (let k = 0; k < n; k++) { L[i0 + k] += sig[k] * gl; R[i0 + k] += sig[k] * gr; }
+  }
+  // ---- voices ----
+  const V = {
+    bass(t0, midi, steps, vel, slide) {
+      const n = Math.floor(steps * STEP * 0.92 * MSR), f0 = mtof(midi), fs = slide != null ? mtof(slide) : 0, k = Math.min(n, Math.floor(0.05 * MSR));
+      const sn = Math.min(n, Math.floor(0.03 * MSR)), f12 = mtof(midi + 12), rel = Math.floor(0.006 * MSR), s = new Float32Array(n);
+      let ph = 0, sp = 0;
+      for (let i = 0; i < n; i++) {
+        const f = slide != null && i < k ? fs * Math.pow(f0 / fs, i / k) : f0;
+        ph = (ph + f / MSR) % 1; let x = triStep(ph);
+        if (i < sn) { sp = (sp + f12 / MSR) % 1; x += (sp < 0.25 ? 1 : -1) * 0.5 * (1 - i / sn); }
+        let e = envad(i / MSR, 0.001, 0.35, 0.55) * vel; if (i >= n - rel) e *= (n - i) / rel;
+        s[i] = x * e;
+      }
+      mix('bass', t0, s);
+    },
+    kick(t0, vel) {
+      const n = Math.floor(0.16 * MSR), s = new Float32Array(n); let ph = 0;
+      for (let i = 0; i < n; i++) { const t = i / MSR; ph = (ph + (50 + 140 * Math.exp(-t * 38)) / MSR) % 1; s[i] = (triStep(ph) * vol4(Math.exp(-t * 16)) + NZ[i] * Math.exp(-t * 180) * 0.4) * vel; }
+      mix('kick', t0, s);
+    },
+    snare(t0, vel) {
+      const n = Math.floor(0.2 * MSR), s = new Float32Array(n); let ph = 0;
+      for (let i = 0; i < n; i++) { const t = i / MSR; ph = (ph + (185 - 60 * t) / MSR) % 1; s[i] = (NZ[(i + 4000) % MSR] * vol4(Math.exp(-t * 17)) + triStep(ph) * Math.exp(-t * 30) * 0.6) * vel; }
+      mix('snare', t0, s);
+    },
+    hat(t0, vel, open) {
+      const n = Math.floor((open ? 0.13 : 0.035) * MSR), s = new Float32Array(n), k = open ? 16 : 110;
+      for (let i = 0; i < n; i++) s[i] = NM[i] * vol4(Math.exp(-(i / MSR) * k)) * vel;
+      mix('hat', t0, s);
+    },
+    wah(t0, tones, steps, vel, wah) {
+      const dur = steps * STEP * 0.8, n = Math.floor(dur * MSR), s = new Float32Array(n), fr = tones.map(mtof);
+      let ph = 0, y = 0;
+      for (let i = 0; i < n; i++) {
+        const t = i / MSR, x = cl(t / dur, 0, 1), sw = Math.sin(x * PI);
+        ph = (ph + fr[Math.floor(t / 0.016) % fr.length] / MSR) % 1;
+        const duty = wah ? 0.125 + 0.375 * sw : 0.125, c = wah ? 0.05 + 0.45 * Math.pow(sw, 0.7) : 0.35, c2 = 1 - (1 - c) * (1 - c);
+        y += c2 * ((ph < duty ? 1 : -1) - y);
+        s[i] = y * vol4(envad(t, 0.002, 0.12, 0.35)) * vel;
+      }
+      mix('gtr', t0, s);
+    },
+    scratch(t0, root, vel) {
+      const n = Math.floor(0.028 * MSR), s = new Float32Array(n), f = mtof(root + 24); let ph = 0;
+      for (let i = 0; i < n; i++) { ph = (ph + f / MSR) % 1; s[i] = ((ph < 0.125 ? 1 : -1) * 0.5 + NZ[(i + 9000) % MSR] * 0.5) * Math.exp(-(i / MSR) * 90) * vel; }
+      mix('gtr', t0, s);
+    },
+    clav(t0, midi, vel) {
+      const n = Math.floor(0.09 * MSR), s = new Float32Array(n), f = mtof(midi); let ph = 0;
+      for (let i = 0; i < n; i++) { ph = (ph + f / MSR) % 1; s[i] = (ph < 0.125 ? 1 : -1) * vol4(Math.exp(-(i / MSR) * 30)) * vel; }
+      mix('clav', t0, s);
+    },
+    clavLead(t0, midi, steps, vel) {
+      const n = Math.floor(steps * STEP * 0.85 * MSR), s = new Float32Array(n), f = mtof(midi); let a = 0, b = 0;
+      for (let i = 0; i < n; i++) { a = (a + f / MSR) % 1; b = (b + 2 * f / MSR) % 1; s[i] = ((a < 0.125 ? 1 : -1) * 0.7 + (b < 0.5 ? 1 : -1) * 0.3) * vol4(Math.exp(-(i / MSR) * 9)) * vel; }
+      mix('clav', t0, s);
+    },
+    horn(t0, midi, steps, vel, scoop, fall, vib) {
+      const dur = steps * STEP * 0.9, n = Math.floor(dur * MSR), s = new Float32Array(n), f0 = mtof(midi), rel = Math.floor(0.01 * MSR);
+      let a = 0, b = 0;
+      for (let i = 0; i < n; i++) {
+        const t = i / MSR; let sm = 0;
+        if (scoop) sm -= Math.exp(-t / 0.025);
+        if (fall && t > dur * 0.6) sm -= (t - dur * 0.6) / (dur * 0.4) * 5;
+        if (vib) sm += 0.25 * Math.sin(2 * PI * 5.5 * t) * cl((t - 0.12) / 0.1, 0, 1);
+        const f = f0 * Math.pow(2, sm / 12);
+        a = (a + f / MSR) % 1; b = (b + f * 1.003 / MSR) % 1;
+        let e = vol4(envad(t, 0.006, 0.25, 0.7)) * vel; if (i >= n - rel) e *= (n - i) / rel;
+        s[i] = ((a < 0.5 ? 1 : -1) * 0.6 + (b < 0.25 ? 1 : -1) * 0.4) * e;
+      }
+      mix('horn', t0, s);
+    },
+    lead(t0, midi, steps, vel, bend, vib) {
+      const dur = steps * STEP * 0.95, n = Math.floor(dur * MSR), s = new Float32Array(n), f0 = mtof(midi), rel = Math.floor(0.008 * MSR);
+      let ph = 0;
+      for (let i = 0; i < n; i++) {
+        const t = i / MSR; let sm = 0;
+        if (bend != null) sm += (bend - midi) * cl(1 - t / 0.07, 0, 1);
+        if (vib && dur > 0.2) sm += 0.3 * Math.sin(2 * PI * 6 * t) * cl((t - 0.15) / 0.15, 0, 1);
+        ph = (ph + f0 * Math.pow(2, sm / 12) / MSR) % 1;
+        let e = vol4(envad(t, 0.004, 0.4, 0.75)) * vel; if (i >= n - rel) e *= (n - i) / rel;
+        s[i] = (ph < 0.25 ? 1 : -1) * e;
+      }
+      mix('lead', t0, s);
+    },
+  };
+  // ---- the score ----
+  const EV = [];
+  const ev = (bar, st, fn, ...a) => EV.push([bar, st, fn, a]);
+  const CH = { Em9: [40, [64, 67, 71, 74, 78]], A13: [45, [67, 73, 76, 78]], Cmaj7: [48, [64, 67, 71, 72]], Bm7: [47, [62, 66, 69, 71]], Am9: [45, [64, 67, 71, 72]], 'B7#9': [47, [63, 69, 74, 75]] };
+  const GA = [[0, 0, 2, 1], [3, 0, 1, .6], [6, 12, 1, .9], [7, 10, 1, .8], [8, 7, 2, .9], [10, 0, 1, .7], [11, 3, 1, .8], [13, 5, 1, .7], [14, 7, 1, .8], [15, 10, 1, .9]];
+  const GB = [[0, 0, 2, 1], [3, 0, 1, .6], [5, 12, 1, .9], [6, 10, 1, .8], [7, 7, 1, .8], [8, 5, 1, .8], [9, 3, 1, .7], [10, 0, 2, .9], [12, 3, 1, .8], [13, 4, 1, .8], [14, 5, 1, .9], [15, 6, 1, .9]];
+  const GM = [[0, 0, 2, 1], [3, 0, 1, .6], [6, 12, 1, .9], [7, 11, 1, .8], [8, 7, 2, .9], [10, 0, 1, .7], [11, 4, 1, .8], [12, 7, 1, .8], [14, 9, 1, .8], [15, 11, 1, .9]];
+  const GH = [[0, 0, 3, 1], [3, 0, 1, .6], [4, 7, 2, .8], [6, 10, 1, .8], [7, 12, 1, .9], [8, 0, 2, 1], [11, 0, 1, .6], [12, 10, 1, .8], [13, 7, 1, .8], [14, 5, 1, .8], [15, 3, 1, .9]];
+  const bassBar = (bar, c, g) => { const r = CH[c][0]; for (const [st, o, ln, v] of g) ev(bar, st, 'bass', r + o, ln, v, st === 0 && bar % 4 === 0 ? r + o - 2 : null); };
+  const gtrBar = (bar, c, pat = 'A.SS.AS.S.AS.SA.', wah = true) => { const [r, tn] = CH[c]; [...pat].forEach((ch, st) => { if (ch === 'A') ev(bar, st, 'wah', tn, 2, 0.9, wah); else if (ch === 'S') ev(bar, st, 'scratch', r, 0.45); }); };
+  const clavBar = (bar, c) => { const tn = CH[c][1]; for (const [st, k] of [[2, 0], [5, 1], [9, 2], [12, 1], [14, 0]]) ev(bar, st, 'clav', tn[k % tn.length] - 12, 0.5); };
+  const KICK = [1, 0, 0, .6, 0, 0, 1, 0, 0, 0, 1, 0, 0, .5, 0, 0], KICK2 = [1, 0, 0, 0, 0, 0, 1, 0, 0, .7, 0, 0, 0, 0, 1, 0], SNARE = [0, 0, 0, 0, 1, 0, 0, .25, 0, .2, 0, 0, 1, 0, 0, .3];
+  function drums(bar, o = {}) {
+    const kp = o.alt ? KICK2 : KICK, kOn = o.kick !== false, sOn = o.snare !== false, hOn = o.hats !== false;
+    for (let st = 0; st < 16; st++) {
+      if (kOn && kp[st]) ev(bar, st, 'kick', kp[st]);
+      if (sOn && SNARE[st]) ev(bar, st, 'snare', SNARE[st]);
+      if (hOn) ev(bar, st, 'hat', st === 14 ? 0.45 : st % 2 ? 0.28 : 0.5, st === 14);
+    }
+    if (o.fill) for (const [st, v] of [[12, .7], [13, .8], [14, .9], [15, 1]]) ev(bar, st, 'snare', v);
+    if (o.roll) for (let st = 0; st < 16; st++) ev(bar, st, 'snare', 0.2 + 0.8 * st / 15);
+  }
+  const SCALE = new Set([4, 6, 7, 9, 11, 1, 2]);
+  function harm(m, c) {
+    const pcs = c ? new Set([...CH[c][1].map(t => t % 12), CH[c][0] % 12]) : SCALE;
+    for (let d = 3; d <= 5; d++) if (pcs.has((m - d) % 12)) return m - d;
+    return m - 5;
+  }
+  function hornPhrase(bar, ph, vel = 0.85, c = null) {
+    for (const [st, m, ln, fl] of ph) {
+      ev(bar, st, 'horn', m, ln, vel, true, fl === 'fall', fl === 'vib');
+      ev(bar, st, 'horn', harm(m, c), ln, vel * 0.6, true, fl === 'fall', fl === 'vib');
+    }
+  }
+  const stabs = (bar, c, steps) => { for (const st of steps) for (const m of CH[c][1].slice(0, 3)) ev(bar, st, 'horn', m, 1, 0.5, true, false, false); };
+  const soloBar = (bar, notes) => { for (const [st, m, ln, bf] of notes) ev(bar, st, 'lead', m, ln, 0.8, bf ?? null, true); };
+  const H1 = [[0, 71, 1], [2, 74, 1], [3, 76, 3], [7, 76, 1], [8, 74, 1], [9, 71, 2], [12, 69, 1], [14, 71, 2]];
+  const H2 = [[2, 67, 1], [3, 69, 1], [4, 71, 2], [7, 74, 1], [8, 76, 4, 'vib'], [14, 79, 2, 'fall']];
+  const H3 = [[0, 71, 1], [2, 74, 1], [3, 76, 3], [7, 76, 1], [8, 79, 1], [9, 78, 1], [10, 76, 2], [12, 74, 1], [14, 76, 2]];
+  const H4 = [[0, 74, 1], [1, 76, 1], [2, 74, 1], [3, 71, 2], [6, 69, 1], [7, 67, 1], [8, 64, 6, 'vib']];
+  const SOLO = [
+    [[0, 76, 3, 74], [4, 79, 1], [5, 76, 1], [6, 74, 1], [7, 71, 2], [10, 74, 2, 72], [13, 71, 1], [14, 69, 2]],
+    [[0, 67, 2], [2, 69, 1], [3, 70, 1], [4, 71, 4, 69], [10, 64, 1], [11, 67, 1], [12, 69, 1], [13, 71, 1], [14, 74, 2]],
+    [[0, 76, 1], [1, 79, 1], [2, 81, 4, 79], [8, 79, 1], [9, 76, 1], [10, 74, 1], [11, 76, 1], [12, 74, 1], [13, 71, 3]],
+    [[0, 69, 2], [3, 71, 1], [4, 74, 1], [5, 76, 1], [6, 79, 1], [7, 81, 1], [8, 83, 6, 81]],
+    [[0, 81, 1], [1, 79, 1], [2, 76, 1], [3, 79, 1], [4, 76, 1], [5, 74, 1], [6, 76, 1], [7, 74, 1], [8, 71, 1], [9, 74, 1], [10, 71, 1], [11, 69, 1], [12, 67, 2], [14, 64, 2]],
+    [[2, 76, 2, 75], [4, 76, 1], [6, 76, 2, 75], [8, 76, 1], [10, 79, 2, 78], [12, 79, 1], [14, 81, 2, 80]],
+    [[0, 83, 3, 81], [3, 81, 1], [4, 79, 2], [6, 76, 1], [7, 79, 1], [8, 76, 2], [10, 74, 1], [11, 71, 1], [12, 74, 4, 72]],
+    [[0, 76, 8, 74], [10, 71, 1], [11, 74, 1], [12, 76, 1], [13, 79, 1], [14, 82, 1], [15, 83, 1]],
+  ];
+  const CRIFF = [
+    [[0, 64, 1], [2, 67, 1], [3, 69, 1], [4, 70, 1], [5, 71, 2], [8, 74, 1], [10, 71, 1], [11, 69, 1], [12, 67, 2], [14, 64, 1]],
+    [[0, 62, 1], [1, 64, 2], [4, 67, 1], [6, 64, 1], [7, 62, 1], [8, 59, 2], [11, 62, 1], [12, 64, 4]],
+    [[0, 64, 1], [2, 67, 1], [3, 69, 1], [4, 70, 1], [5, 71, 2], [8, 76, 1], [9, 74, 1], [10, 71, 1], [11, 69, 1], [12, 67, 1], [13, 69, 1], [14, 71, 2]],
+    [[0, 73, 2], [3, 71, 1], [4, 69, 1], [6, 67, 1], [7, 64, 1], [8, 61, 2], [11, 64, 1], [12, 67, 1], [13, 69, 1], [14, 70, 1], [15, 71, 1]],
+  ];
+  const clavRiff = (bar, k, vel = 0.9) => { for (const [st, m, ln] of CRIFF[k % 4]) ev(bar, st, 'clavLead', m, ln, vel); };
+  const SHOUT = [
+    [[0, 76, 2], [3, 79, 1], [4, 76, 1], [6, 72, 2], [10, 71, 1], [11, 72, 1], [12, 74, 2]],
+    [[0, 74, 2], [3, 78, 1], [4, 74, 1], [6, 71, 2], [10, 69, 1], [11, 71, 1], [12, 73, 2]],
+    [[0, 72, 2], [3, 76, 1], [4, 72, 1], [6, 69, 2], [10, 67, 1], [11, 69, 1], [12, 71, 2]],
+    [[0, 75, 1], [1, 74, 1], [2, 75, 1], [3, 78, 2], [6, 81, 4, 'vib'], [12, 78, 1], [13, 75, 1], [14, 71, 2, 'fall']],
+  ];
+  const S2L = {
+    0: [[0, 71, 1], [1, 74, 1], [2, 76, 2, 74], [5, 79, 1], [6, 76, 1], [7, 74, 1], [8, 76, 4, 75], [13, 74, 1], [14, 71, 2]],
+    2: [[0, 73, 1], [1, 76, 1], [2, 79, 2, 78], [4, 81, 1], [5, 79, 1], [6, 76, 1], [7, 73, 1], [8, 76, 4], [13, 79, 1], [14, 81, 2]],
+    4: [[0, 76, 1], [1, 77, 1], [2, 78, 1], [3, 79, 3, 77], [8, 81, 1], [9, 79, 1], [10, 76, 1], [11, 74, 1], [12, 71, 4, 70]],
+    6: [[0, 85, 2, 83], [2, 83, 1], [3, 81, 1], [4, 79, 1], [5, 78, 1], [6, 76, 2], [8, 73, 1], [9, 76, 1], [10, 79, 1], [11, 81, 1], [12, 83, 4, 81]],
+  };
+  const S2H = {
+    1: [[2, 74, 1], [3, 76, 1], [4, 79, 2], [8, 76, 2, 'fall']],
+    3: [[0, 83, 2, 'fall'], [6, 79, 1], [7, 81, 1], [8, 79, 2], [12, 76, 2]],
+    5: [[2, 67, 1], [3, 69, 1], [4, 71, 1], [5, 74, 1], [6, 76, 2], [10, 79, 4, 'vib']],
+    7: [[0, 88, 4, 'vib'], [6, 83, 1], [7, 81, 1], [8, 79, 1], [9, 76, 1], [10, 74, 1], [11, 71, 1], [12, 69, 2], [14, 71, 2, 'fall']],
+  };
+  const AP = ['Em9', 'Em9', 'A13', 'Em9'], BP = ['Cmaj7', 'Bm7', 'Am9', 'B7#9'];
+  const gFor = i => i % 4 === 1 ? GB : GA;
+  let bar = 0;
+  for (let i = 0; i < 4; i++, bar++) {          // intro
+    drums(bar, { snare: i >= 2, fill: i === 3 });
+    gtrBar(bar, 'Em9', i < 2 ? 'S.S.S.S.S.S.S.S.' : 'A.S.S.A.S.S.A.S.', i >= 2);
+    if (i >= 1) bassBar(bar, 'Em9', GH);
+  }
+  for (let i = 0; i < 8; i++, bar++) {          // groove
+    const c = AP[i % 4]; drums(bar, { fill: i === 7 }); bassBar(bar, c, gFor(i)); gtrBar(bar, c); if (i >= 4) clavBar(bar, c);
+  }
+  function hook(pass) {
+    for (let i = 0; i < 8; i++, bar++) {
+      const c = AP[i % 4]; drums(bar, { fill: i === 7, alt: pass === 3 && i % 2 === 1 }); bassBar(bar, c, gFor(i)); gtrBar(bar, c); clavBar(bar, c);
+      const ph = { 1: [H1, H2, H1, H4], 2: [H1, H2, H3, H4], 3: [H3, H2, H1, H4] }[pass][i % 4];
+      hornPhrase(bar, ph, 0.85, c);
+      if (pass === 3) for (const [st, m, ln] of ph) ev(bar, st, 'lead', m + 12, ln, 0.45, null, false);
+    }
+  }
+  function bridge(shout) {
+    BP.forEach((c, i) => {
+      drums(bar, { fill: i === 3 }); bassBar(bar, c, c === 'Cmaj7' ? GM : GA); gtrBar(bar, c);
+      if (shout) hornPhrase(bar, SHOUT[i], 0.9, c); else stabs(bar, c, i < 3 ? [0, 6, 10] : [0, 3, 6, 8, 10, 12, 14]);
+      bar++;
+    });
+  }
+  hook(1); bridge(false);
+  for (let i = 0; i < 8; i++, bar++) {          // clav groove
+    const c = AP[i % 4]; drums(bar, { alt: true, fill: i === 7 }); bassBar(bar, c, gFor(i)); gtrBar(bar, c, 'S.S.A.S.S.S.A.S.'); clavRiff(bar, i);
+    if (i >= 4) stabs(bar, c, [14]);
+  }
+  hook(2);
+  for (let i = 0; i < 4; i++, bar++) {          // break
+    drums(bar, { snare: i >= 2, hats: i % 2 === 1, fill: i === 3 }); bassBar(bar, 'Em9', GH); if (i % 2) stabs(bar, 'Em9', [14]);
+  }
+  for (let i = 0; i < 8; i++, bar++) {          // solo
+    const c = AP[i % 4]; drums(bar, { fill: i === 7 }); bassBar(bar, c, gFor(i)); gtrBar(bar, c, 'A..S.A..S.A.S...'); soloBar(bar, SOLO[i]);
+  }
+  bridge(true); bridge(true);                   // shout chorus
+  for (let i = 0; i < 8; i++, bar++) {          // breakdown
+    drums(bar, { snare: i >= 6, hats: i >= 4, roll: i === 7 }); bassBar(bar, 'Em9', GH); clavRiff(bar, i, i < 4 ? 0.75 : 0.9);
+    if (i >= 6) gtrBar(bar, 'Em9', 'S.S.S.S.S.S.S.S.', false);
+  }
+  for (let i = 0; i < 8; i++, bar++) {          // traded solo
+    const c = AP[i % 4]; drums(bar, { alt: i % 2 === 0, fill: i === 7 }); bassBar(bar, c, gFor(i)); gtrBar(bar, c, 'A..S.A..S.A.S...');
+    if (S2L[i]) soloBar(bar, S2L[i]); else hornPhrase(bar, S2H[i], 0.9, c);
+  }
+  bridge(false); hook(3);
+  for (let i = 0; i < 8; i++, bar++) {          // groove out → back to the intro
+    const c = AP[i % 4]; drums(bar, { alt: i >= 4, fill: i === 7 }); bassBar(bar, c, gFor(i)); gtrBar(bar, c); clavBar(bar, c);
+    if (i % 2) hornPhrase(bar, [[8, 76, 4, 'vib'], [14, 79, 2, 'fall']], 0.6, c);
+  }
+  const BARS = bar, NSEG = BARS / SEG;
+  const bySeg = Array.from({ length: NSEG }, () => []);
+  for (const e of EV) bySeg[Math.floor(e[0] / SEG)].push(e);
+  // ---- render one 4-bar segment (plus a tail for ringing notes) to stereo floats ----
+  function renderSeg(k) {
+    const n = Math.ceil((SEG * BAR + TAIL) * MSR);
+    L = new Float32Array(n); R = new Float32Array(n);
+    const b0 = k * SEG;
+    for (const [b, st, fn, a] of bySeg[k]) V[fn]((b - b0) * BAR + stepT(st), ...a);
+    const th = Math.tanh(1.25);
+    for (let i = 0; i < n; i++) {
+      L[i] = Math.round(Math.tanh(L[i] * MASTER * 1.25) / th * 128) / 128;
+      R[i] = Math.round(Math.tanh(R[i] * MASTER * 1.25) / th * 128) / 128;
+    }
+    const out = { L, R }; L = R = null; return out;
+  }
+  // ---- playback: schedule segments a few seconds ahead; tails overlap naturally ----
+  let ctx = null, gain = null, timer = null, nextT = 0, seg = 0, live = [], duck = 1;
+  function tick() {
+    if (!ctx) return;
+    if (nextT < ctx.currentTime + 0.05) nextT = ctx.currentTime + 0.1;
+    while (nextT < ctx.currentTime + 5) {
+      const { L: l, R: r } = renderSeg(seg);
+      const buf = ctx.createBuffer(2, l.length, MSR);
+      buf.copyToChannel(l, 0); buf.copyToChannel(r, 1);
+      const src = ctx.createBufferSource(); src.buffer = buf; src.connect(gain); src.start(nextT);
+      live.push(src); src.onended = () => { live = live.filter(s => s !== src); };
+      nextT += SEG * BAR; seg = (seg + 1) % NSEG;
+    }
+  }
+  return {
+    BARS, LOOP_SECONDS: BARS * BAR, renderSeg,
+    get playing() { return !!timer; },
+    start(ac) {
+      if (timer || !ac) return;
+      ctx = ac; gain = ctx.createGain(); gain.gain.value = VOL * duck; gain.connect(ctx.destination);
+      seg = 0; nextT = 0; tick(); timer = setInterval(tick, 400);
+    },
+    stop() {
+      if (!timer) return;
+      clearInterval(timer); timer = null;
+      for (const s of live) { try { s.stop(); } catch (e) {} }
+      live = []; if (gain) gain.disconnect(); gain = null;
+    },
+    setDuck(d) { if (d === duck) return; duck = d; if (gain && ctx) gain.gain.setTargetAtTime(VOL * d, ctx.currentTime, 0.08); },
+  };
+})();
 
 // ───────────────────────────── elevators ─────────────────────────────
 function playerControls(s) {
@@ -540,7 +833,7 @@ function updateCars(dt, ambient) {
 // ───────────────────────────── player ─────────────────────────────
 function killPlayer(how) {
   const p = G.player;
-  if (!p || p.dead || p.door) return;
+  if (!p || p.dead || p.door || p.hide) return;
   if (how === 'shot' && p.inv > 0) return;
   if (how === 'shot' && p.vest) { p.vest = false; p.inv = 1.2; burst(p.x, p.y - 30, '#9fd3ff', 12); banner('VEST ABSORBED THE HIT', 1.2, '#9fd3ff'); sfx('block'); return; }
   p.dead = true; p.deadT = 1.9; p.how = how; p.stair = null; p.duck = false;
@@ -584,6 +877,11 @@ function updatePlayer(dt) {
     }
     return;
   }
+  if (p.hide) {
+    // ducked inside a blue-door room: invisible and untouchable until S / down steps back out
+    if (pressed.down) { p.hide.d.openT = 0.35; p.hide = null; p.inv = Math.max(p.inv, 0.35); p.duck = false; sfx('door'); }
+    return;
+  }
   if (p.stair) { stepStair(p, dt); return; }
 
   const inCar = p.grounded && p.car && insideCar(p);
@@ -597,6 +895,8 @@ function updatePlayer(dt) {
       const k = floorOf(p);
       const d = B.floors[k].doors.find(d => d.type === 'red' && !d.open && Math.abs(d.x + d.w / 2 - p.x) < 14);
       if (d) { d.open = true; d.openT = 0.7; p.door = { d, t: 0.75 }; sfx('door'); return; }
+      const bd = pressed.up && B.floors[k].doors.find(d => d.type === 'blue' && d.openT <= 0 && Math.abs(d.x + d.w / 2 - p.x) < 14);
+      if (bd) { p.hide = { d: bd }; bd.used = true; p.x = bd.x + bd.w / 2; bd.openT = 0.35; p.vx = 0; sfx('door'); return; }
       if (k === 0 && G.cleared && Math.abs(B.exit.x + B.exit.w / 2 - p.x) < 16) { G.state = 'escape'; G.escapeT = 2.6; p.door = { d: B.exit, t: 99 }; sfx('clear'); return; }
     }
     if (keys.down && !inCar) {
@@ -638,7 +938,7 @@ function updatePlayer(dt) {
 // ───────────────────────────── enemies ─────────────────────────────
 function spawnEnemy(r, k) {
   const p = G.player, pf = floorOf(p);
-  const doors = B.floors[k].doors.filter(d => d.type === 'blue' && (pf !== k || Math.abs(d.x + d.w / 2 - p.x) > 90));
+  const doors = B.floors[k].doors.filter(d => d.type === 'blue' && !d.used && (pf !== k || Math.abs(d.x + d.w / 2 - p.x) > 90));
   if (!doors.length) return false;
   const d = doors[Math.floor(R() * doors.length)];
   d.openT = 0.6;
@@ -762,7 +1062,7 @@ function updateEnemy(e, dt) {
   if (e.stair) { stepStair(e, dt); return; }
   e.fireCd -= dt; e.duckT -= dt; e.hurtT -= dt; e.noElevT -= dt;
   const p = G.player, ef = floorOf(e), pf = floorOf(p);
-  const pVis = !p.dead && !p.door && G.state === 'play';
+  const pVis = !p.dead && !p.door && !p.hide && G.state === 'play';
   const same = pVis && !p.stair && pf === ef && e.grounded && Math.abs(p.y - e.y) < 70;
   const dark = isDark(ef);
   let mv = 0, spd = 1;
@@ -830,7 +1130,7 @@ function updateBullets(dt) {
         const ly = floorY(k) - 60;
         if (Math.abs(b.x - l.x) < 8 && Math.abs(b.y - ly) < 9) { l.state = 'fall'; l.y = ly; l.vy = 0; b.dead = true; sfx('lamp'); burst(l.x, ly, '#fff2b0', 8); }
       }
-    } else if (!p.dead && !p.door && p.inv <= 0) {
+    } else if (!p.dead && !p.door && !p.hide && p.inv <= 0) {
       const top = p.y - eh(p) + (p.grounded || p.stair ? 0 : 4);
       if (Math.abs(b.x - p.x) < 9 && b.y >= top && b.y <= p.y) { b.dead = true; killPlayer('shot'); }
     }
@@ -867,7 +1167,17 @@ const floorLabel = k => (k === 0 ? 'GROUND' : 'FLOOR ' + k);
 // ───────────────────────────── main update ─────────────────────────────
 function update(dt) {
   G.t += dt;
-  if (pressed.mute) { G.muted = !G.muted; }
+  if (pressed.mute) {
+    G.muted = !G.muted; if (G.muted) Music.stop(); else audioInit();
+    banner(G.muted ? 'SOUND OFF  ·  M' : 'SOUND ON  ·  M', 1.2);
+    try { localStorage.setItem('liftprotocol.muted', G.muted ? '1' : '0'); } catch (e) {}
+  }
+  if (pressed.music) {
+    G.musicOff = !G.musicOff; if (G.musicOff) Music.stop(); else audioInit();
+    banner(G.musicOff ? 'MUSIC OFF  ·  N' : 'MUSIC ON  ·  N', 1.2);
+    try { localStorage.setItem('liftprotocol.music', G.musicOff ? 'off' : 'on'); } catch (e) {}
+  }
+  Music.setDuck(G.state === 'play' && G.paused ? 0.3 : 1);
   if (G.state === 'title') {
     if (B) updateCars(dt, true);
     if (pressed.start || pressed.fire) { newGame(); }
@@ -991,7 +1301,15 @@ function drawDoor(d, fy) {
   rect(x - 3, y - 3, w + 6, h + 3, '#121420');
   if (d.type === 'blue') {
     if (d.openT > 0) { rect(x, y, w, h, '#05060a'); rect(x, y, 6, h, '#2f5fc4'); }
-    else { rect(x, y, w, h, '#3566d1'); rect(x + 4, y + 5, w - 8, 18, '#4479e6'); rect(x + 4, y + 28, w - 8, 18, '#4479e6'); rect(x + w - 7, y + 26, 3, 3, '#cfd8ff'); }
+    else if (G.player && G.player.hide && G.player.hide.d === d) {
+      rect(x, y, w, h, '#3566d1'); rect(x + 4, y + 5, w - 8, 18, '#4479e6'); rect(x + 4, y + 28, w - 8, 18, '#4479e6');
+      rect(x + w - 5, y, 5, h, '#05060a');                                   // door left ajar
+      if (Math.sin(G.t * 2.2) > -0.6) { rect(x + w - 4, y + 14, 2, 1, HERO.lens); rect(x + w - 2, y + 14, 1, 1, HERO.lens); }
+    }
+    else {
+      rect(x, y, w, h, '#3566d1'); rect(x + 4, y + 5, w - 8, 18, '#4479e6'); rect(x + 4, y + 28, w - 8, 18, '#4479e6'); rect(x + w - 7, y + 26, 3, 3, '#cfd8ff');
+      if (d.used) { rect(x - 2, y + 24, w + 4, 4, '#8a6a3c'); rect(x - 2, y + 24, w + 4, 1, '#b8925a'); rect(x + 3, y + 23, 2, 6, '#3a2a14'); rect(x + w - 5, y + 23, 2, 6, '#3a2a14'); }  // barred: no more spawns
+    }
   } else {
     if (d.open) { rect(x, y, w, h, d.openT > 0 ? '#05060a' : '#3a1f22'); rect(x, y, 5, h, '#7a3036'); }
     else {
@@ -1173,7 +1491,7 @@ function drawEnemy(e) {
 }
 function drawPlayer() {
   const p = G.player;
-  if (!p || p.door) return;
+  if (!p || p.door || p.hide) return;
   if (p.dead) {
     const t = p.deadT / 1.9;
     ctx.save(); ctx.globalAlpha = Math.max(0, Math.min(1, t * 1.5));
@@ -1235,10 +1553,13 @@ function render() {
   }
   for (const q of G.pops) { ctx.globalAlpha = Math.min(1, q.t * 2); text(q.text, q.x, q.y, 10, '#fff6cf', 'center', 700); ctx.globalAlpha = 1; }
   // prompts
-  if (p && G.state === 'play' && !p.dead && !p.door && p.grounded && !p.stair) {
+  if (p && G.state === 'play' && p.hide) hint('▼ LEAVE ROOM', p.x, p.y - 62);
+  if (p && G.state === 'play' && !p.dead && !p.door && !p.hide && p.grounded && !p.stair) {
     const k = floorOf(p);
     const d = B.floors[k].doors.find(d => d.type === 'red' && !d.open && Math.abs(d.x + d.w / 2 - p.x) < 14);
+    const bd = B.floors[k].doors.find(d => d.type === 'blue' && Math.abs(d.x + d.w / 2 - p.x) < 14);
     if (d) hint('▲ FILE', p.x, p.y - 62);
+    else if (bd) hint('▲ HIDE', p.x, p.y - 62);
     else if (k === 0 && G.cleared && Math.abs(B.exit.x + B.exit.w / 2 - p.x) < 16) hint('▲ ESCAPE', p.x, p.y - 62);
     else if (stairAvail(p, 1) && stairAvail(p, -1)) hint('▲▼ STAIRS', p.x, p.y - 62);
     else if (stairAvail(p, 1)) hint('▲ STAIRS', p.x, p.y - 62);
@@ -1407,7 +1728,7 @@ function frame(now) {
 B = genBuilding(1, 12345); N = B.N; G.camY = worldH() - CH - 200;
 requestAnimationFrame(frame);
 
-window.__LP = { G, killEnemy: (e,h) => killEnemy(e,h), insideCar: e => insideCar(e), genBuilding, update, keys, pressed, get B() { return B; }, startLevel, newGame, floorY: k => floorY(k), floorOf: e => floorOf(e) };
+window.__LP = { Music, G, killEnemy: (e,h) => killEnemy(e,h), insideCar: e => insideCar(e), genBuilding, update, keys, pressed, get B() { return B; }, startLevel, newGame, floorY: k => floorY(k), floorOf: e => floorOf(e) };
 })();
 </script>
 </body>
