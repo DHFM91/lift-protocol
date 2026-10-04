@@ -30,6 +30,9 @@ kbd{font-family:var(--display);font-size:11px;color:var(--ink);border:1px solid 
 .pad{display:grid;grid-template-columns:repeat(3,56px);grid-template-rows:repeat(2,52px);gap:6px}
 .pad.right{justify-content:end;grid-template-columns:repeat(2,72px)}
 .touch button{font-family:var(--display);font-size:13px;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:6px;touch-action:none}
+/* phones: no text selection, copy/look-up callouts, magnifier or tap flash on the game or its buttons */
+.stage,.stage *,.touch,.touch *{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+@media (pointer:coarse){body{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}html,body{touch-action:manipulation}}
 .touch button:active,.touch button.on{background:#262b4d;border-color:var(--amber)}
 .b-up{grid-column:2;grid-row:1}.b-left{grid-column:1;grid-row:2}.b-down{grid-column:2;grid-row:2}.b-right{grid-column:3;grid-row:2}
 .b-jump{grid-column:1;grid-row:1/3}.b-fire{grid-column:2;grid-row:1/3;background:#3a1d22!important}
@@ -455,6 +458,13 @@ cv.addEventListener('pointerdown', ev => {
 });
 addEventListener('pointerup', () => { keys.fire = false; });
 cv.addEventListener('contextmenu', ev => { if (G.state === 'play') ev.preventDefault(); });
+// iOS/Android: stop long-press and thumb slides from starting a text selection, copy callout or magnifier.
+// CSS alone isn't reliable on iOS; cancelling the touch events themselves (non-passive) is.
+for (const el of [cv, document.getElementById('touch')]) {
+  for (const t of ['touchstart', 'touchmove', 'touchend']) el.addEventListener(t, ev => { if (ev.cancelable) ev.preventDefault(); if (t === 'touchend') audioInit(); }, { passive: false });
+  el.addEventListener('contextmenu', ev => ev.preventDefault());
+}
+document.addEventListener('selectstart', ev => { if (ev.target.closest && ev.target.closest('.stage, .touch')) ev.preventDefault(); });
 document.querySelectorAll('#touch button').forEach(b => {
   const k = b.dataset.k;
   const on = ev => { ev.preventDefault(); audioInit(); if (!keys[k]) pressed[k] = true; keys[k] = true; b.classList.add('on'); if (G.state !== 'play' && G.state !== 'gameover') pressed.start = true; };
