@@ -336,6 +336,7 @@ function makePlayer() {
     car: null, stair: null, fireCd: 0, aimT: 0, inv: 0, dead: false, deadT: 0, door: null, vest: false, rapid: 0, fallFrom: floorY(N) + SLAB + 4, adjT: 0, anim: 0 };
 }
 function startLevel() {
+  if (G.state !== 'title') songNext();
   B = genBuilding(G.level, (R() * 4294967295) >>> 0);
   N = B.N;
   G.enemies = []; G.bullets = []; G.fx = []; G.pops = [];
@@ -478,12 +479,14 @@ function sfx(n) {
   }
 }
 
-// ───────────────────────────── music: "Top Floor Strut" ─────────────────────────────
-// An original 8-bit funk loop, composed and synthesized right here: stepped-triangle bass, pulse-wave wah guitar,
-// horns and lead, LFSR-noise drums, crushed to 8 bits. Rendered 4 bars at a time just ahead of playback.
+// ───────────────────────────── music: three original 8-bit funk tracks ─────────────────────────────
+// "Top Floor Strut", "Elevator Down" and "Penthouse Lowdown": composed and synthesized right here with
+// stepped-triangle and slap bass, squelchy synth bass, pulse-wave wah guitar, clav, horns, leads and
+// LFSR-noise drums, crushed to 8 bits. Rendered 4 bars at a time just ahead of playback; the tracks rotate.
 const Music = (() => {
-  const MSR = 22050, BPM = 106, STEP = 60 / BPM / 4, SWING = 0.16, BAR = STEP * 16, SEG = 4, TAIL = 2.6, VOL = 0.42;
+  const MSR = 22050, SEG = 4, TAIL = 2.6, VOL = 0.42, FADE = 0.7;
   const MASTER = 0.95 / 2.11, PI = Math.PI;
+  let STEP = 60 / 106 / 4, BAR = STEP * 16, SWING = 0.16;
   const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
   const stepT = st => st * STEP + (st % 2 === 1 ? SWING * STEP : 0);
   const cl = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -496,8 +499,8 @@ const Music = (() => {
     return o;
   }
   const NZ = lfsr(MSR, false), NM = lfsr(MSR, true);
-  const GAIN = { bass: .62, gtr: .30, horn: .24, lead: .30, kick: .75, snare: .42, hat: .20, clav: .2 };
-  const PAN = { bass: 0, gtr: -.35, horn: .25, lead: .1, kick: 0, snare: .05, hat: .4, clav: -.5 };
+  const GAIN = { bass: .62, pop: .55, gtr: .30, horn: .24, lead: .30, kick: .75, snare: .42, hat: .20, clav: .2, perc: .16, keys: .2 };
+  const PAN = { bass: 0, pop: .08, gtr: -.35, horn: .25, lead: .1, kick: 0, snare: .05, hat: .4, clav: -.5, perc: .45, keys: -.22 };
   let L = null, R = null;
   function mix(ch, t0, sig) {
     const i0 = Math.round(t0 * MSR), g = GAIN[ch], p = PAN[ch], gl = g * (1 - Math.max(0, p)), gr = g * (1 + Math.min(0, p));
@@ -589,8 +592,85 @@ const Music = (() => {
       }
       mix('lead', t0, s);
     },
+    // slap bass: thumb (bright attack, stepped triangle body), pop (snappy pulse), dead note (percussive ghost)
+    thumb(t0, midi, steps, vel, slide) {
+      const n = Math.floor(steps * STEP * 0.9 * MSR), f0 = mtof(midi), fs = slide != null ? mtof(slide) : 0, k = Math.min(n, Math.floor(0.045 * MSR));
+      const rel = Math.floor(0.005 * MSR), s = new Float32Array(n); let ph = 0, q = 0;
+      for (let i = 0; i < n; i++) {
+        const t = i / MSR, f = slide != null && i < k ? fs * Math.pow(f0 / fs, i / k) : f0;
+        ph = (ph + f / MSR) % 1; q = (q + 2 * f / MSR) % 1;
+        let x = triStep(ph) + (q < 0.125 ? 1 : -1) * 0.55 * Math.exp(-t * 55) + NZ[(i + 1200) % MSR] * 0.35 * Math.exp(-t * 320);
+        let e = envad(t, 0.0008, 0.16, 0.42) * vel; if (i >= n - rel) e *= (n - i) / rel;
+        s[i] = x * e;
+      }
+      mix('bass', t0, s);
+    },
+    pop(t0, midi, steps, vel) {
+      const n = Math.floor(Math.min(steps * STEP * 0.9, 0.22) * MSR), f0 = mtof(midi), s = new Float32Array(n), rel = Math.floor(0.004 * MSR);
+      let a = 0, b = 0;
+      for (let i = 0; i < n; i++) {
+        const t = i / MSR, f = f0 * Math.pow(2, 0.35 * Math.exp(-t * 60) / 12);
+        a = (a + f / MSR) % 1; b = (b + f / MSR * 0.5) % 1;
+        let e = vol4(Math.exp(-t * 13)) * vel; if (i >= n - rel) e *= (n - i) / rel;
+        s[i] = ((a < 0.25 ? 1 : -1) * 0.7 + triStep(b) * 0.5 + NZ[(i + 7000) % MSR] * 0.4 * Math.exp(-t * 400)) * e;
+      }
+      mix('pop', t0, s);
+    },
+    dead(t0, midi, vel) {
+      const n = Math.floor(0.04 * MSR), f = mtof(midi), s = new Float32Array(n); let ph = 0;
+      for (let i = 0; i < n; i++) { const t = i / MSR; ph = (ph + f / MSR) % 1; s[i] = (triStep(ph) * 0.6 + NZ[(i + 3000) % MSR] * 0.5) * Math.exp(-t * 85) * vel; }
+      mix('bass', t0, s);
+    },
+    // squelchy synth bass: square through a resonant-ish lowpass whose cutoff snaps open and closes, with glide
+    squelch(t0, midi, steps, vel, from) {
+      const dur = steps * STEP * 0.92, n = Math.floor(dur * MSR), f0 = mtof(midi), ff = from != null ? mtof(from) : f0, g = Math.floor(0.07 * MSR);
+      const rel = Math.floor(0.006 * MSR), s = new Float32Array(n); let ph = 0, sub = 0, y1 = 0, y2 = 0;
+      for (let i = 0; i < n; i++) {
+        const t = i / MSR, f = i < g ? ff * Math.pow(f0 / ff, i / g) : f0;
+        ph = (ph + f / MSR) % 1; sub = (sub + f / 2 / MSR) % 1;
+        const raw = (ph < 0.5 ? 1 : -1) * 0.8 + triStep(sub) * 0.45;
+        const c = 0.035 + 0.5 * Math.exp(-t * 11);
+        y1 += c * (raw - y1); y2 += c * (y1 - y2);
+        const res = (y1 - y2) * 1.6 * Math.exp(-t * 6);
+        let e = envad(t, 0.002, 0.3, 0.7) * vel; if (i >= n - rel) e *= (n - i) / rel;
+        s[i] = cl((y2 + res) * 1.3, -1.2, 1.2) * e * 0.62;
+      }
+      mix('bass', t0, s);
+    },
+    cowbell(t0, vel) {
+      const n = Math.floor(0.24 * MSR), s = new Float32Array(n); let a = 0, b = 0;
+      for (let i = 0; i < n; i++) { const t = i / MSR; a = (a + 562 / MSR) % 1; b = (b + 845 / MSR) % 1; s[i] = ((a < 0.5 ? 1 : -1) + (b < 0.5 ? 1 : -1)) * 0.5 * vol4(Math.exp(-t * 15)) * vel; }
+      mix('perc', t0, s);
+    },
+    // electric-piano style chord: soft pulses with tremolo
+    keys(t0, tones, steps, vel) {
+      const dur = steps * STEP * 0.95, n = Math.floor(dur * MSR), s = new Float32Array(n), fr = tones.map(mtof), ph = fr.map(() => 0), rel = Math.floor(0.02 * MSR);
+      let y = 0;
+      for (let i = 0; i < n; i++) {
+        const t = i / MSR; let x = 0;
+        for (let j = 0; j < fr.length; j++) { ph[j] = (ph[j] + fr[j] / MSR) % 1; x += ph[j] < 0.5 ? 1 : -1; }
+        y += 0.22 * (x / fr.length - y);
+        let e = vol4(envad(t, 0.004, 0.5, 0.45) * (1 - 0.3 * (0.5 + 0.5 * Math.sin(2 * PI * 5 * t)))) * vel; if (i >= n - rel) e *= (n - i) / rel;
+        s[i] = y * e * 1.6;
+      }
+      mix('keys', t0, s);
+    },
+    // smooth synth lead with glide and vibrato
+    synLead(t0, midi, steps, vel, from, vib) {
+      const dur = steps * STEP * 0.96, n = Math.floor(dur * MSR), s = new Float32Array(n), f0 = mtof(midi), ff = from != null ? mtof(from) : f0;
+      const g = Math.floor(0.06 * MSR), rel = Math.floor(0.01 * MSR); let ph = 0, y = 0;
+      for (let i = 0; i < n; i++) {
+        const t = i / MSR; let f = i < g ? ff * Math.pow(f0 / ff, i / g) : f0;
+        if (vib && dur > 0.2) f *= Math.pow(2, 0.35 * Math.sin(2 * PI * 5.8 * t) * cl((t - 0.12) / 0.15, 0, 1) / 12);
+        ph = (ph + f / MSR) % 1; y += 0.3 * ((ph < 0.5 ? 1 : -1) - y);
+        let e = vol4(envad(t, 0.01, 0.6, 0.8)) * vel; if (i >= n - rel) e *= (n - i) / rel;
+        s[i] = y * e;
+      }
+      mix('lead', t0, s);
+    },
   };
-  // ---- the score ----
+  // ───────── song 1: "Top Floor Strut" — Em9 strut, 106 BPM ─────────
+  function song1() {
   const EV = [];
   const ev = (bar, st, fn, ...a) => EV.push([bar, st, fn, a]);
   const CH = { Em9: [40, [64, 67, 71, 74, 78]], A13: [45, [67, 73, 76, 78]], Cmaj7: [48, [64, 67, 71, 72]], Bm7: [47, [62, 66, 69, 71]], Am9: [45, [64, 67, 71, 72]], 'B7#9': [47, [63, 69, 74, 75]] };
@@ -717,53 +797,279 @@ const Music = (() => {
     const c = AP[i % 4]; drums(bar, { alt: i >= 4, fill: i === 7 }); bassBar(bar, c, gFor(i)); gtrBar(bar, c); clavBar(bar, c);
     if (i % 2) hornPhrase(bar, [[8, 76, 4, 'vib'], [14, 79, 2, 'fall']], 0.6, c);
   }
-  const BARS = bar, NSEG = BARS / SEG;
-  const bySeg = Array.from({ length: NSEG }, () => []);
-  for (const e of EV) bySeg[Math.floor(e[0] / SEG)].push(e);
+    return { EV, bars: bar };
+  }
+  // ───────── song 2: "Elevator Down" — one-chord E9 slap-bass vamp, 112 BPM, tight 16ths ─────────
+  function song2() {
+    const EV = [], ev = (bar, st, fn, ...a) => EV.push([bar, st, fn, a]);
+    const CH = { E9: [40, [56, 62, 66, 71]], A9: [45, [61, 67, 71, 76]], B9: [47, [63, 69, 73, 78]] };
+    // slap patterns: [step, T=thumb / P=pop / X=dead, semitones over root, length, velocity]
+    const BA = [[0, 'T', 0, 2, 1], [2, 'X', 0, 0, .6], [3, 'P', 12, 1, .9], [4, 'X', 0, 0, .5], [5, 'T', 0, 1, .75], [6, 'T', 3, 1, .8], [7, 'T', 4, 1, .85],
+      [8, 'P', 12, 1, .9], [9, 'X', 0, 0, .5], [10, 'T', 7, 1, .8], [11, 'P', 10, 1, .85], [12, 'X', 0, 0, .5], [13, 'T', 7, 1, .7], [14, 'P', 12, 1, .95], [15, 'T', 10, 1, .6]];
+    const BB = [[0, 'T', 0, 3, 1], [3, 'X', 0, 0, .5], [4, 'P', 12, 1, .9], [5, 'P', 10, 1, .8], [6, 'T', 7, 1, .8], [7, 'X', 0, 0, .5], [8, 'T', 5, 1, .8], [9, 'T', 6, 1, .75],
+      [10, 'T', 7, 2, .9], [12, 'P', 12, 1, .9], [13, 'X', 0, 0, .5], [14, 'T', 3, 1, .8], [15, 'T', 4, 1, .85]];
+    const BS = [[0, 'T', 0, 4, 1], [6, 'P', 12, 1, .8], [7, 'X', 0, 0, .5], [10, 'T', 0, 1, .8], [11, 'T', 3, 1, .7], [14, 'P', 12, 1, .9]];
+    const slap = (bar, c, pat) => {
+      const r = CH[c][0];
+      for (const [st, ty, o, ln, v] of pat) {
+        if (ty === 'T') ev(bar, st, 'thumb', r + o, ln, v, st === 0 && bar % 4 === 0 ? r + o - 2 : null);
+        else if (ty === 'P') ev(bar, st, 'pop', r + o, ln, v);
+        else ev(bar, st, 'dead', r + o, v);
+      }
+    };
+    const K = [1, 0, .7, 0, 0, 0, 0, .5, 0, 0, 1, 0, 0, .6, 0, 0], KB = [1, 0, 0, 0, 0, 0, .8, 0, 0, .6, 0, 0, 0, 0, .8, 0];
+    const S = [0, 0, 0, .14, 1, 0, 0, .2, 0, .26, 0, .13, 1, 0, 0, .3];
+    function drums(bar, o = {}) {
+      const kp = o.alt ? KB : K;
+      for (let st = 0; st < 16; st++) {
+        if (o.kick !== false && kp[st]) ev(bar, st, 'kick', kp[st]);
+        if (o.snare !== false && S[st]) ev(bar, st, 'snare', o.snare === 'light' ? S[st] * .45 : S[st]);
+        if (o.hats !== false) ev(bar, st, 'hat', st === 10 ? 0.5 : st % 2 ? 0.24 : st % 4 ? 0.42 : 0.55, st === 10);
+      }
+      if (o.bell) for (const st of [0, 6, 12]) ev(bar, st, 'cowbell', st === 0 ? 0.9 : 0.7);
+      if (o.fill) for (const [st, v] of [[11, .5], [12, .8], [13, .7], [14, .9], [15, 1]]) ev(bar, st, 'snare', v);
+      if (o.roll) for (let st = 0; st < 16; st++) ev(bar, st, 'snare', 0.15 + 0.85 * st / 15);
+    }
+    // chicken-scratch 16ths: C = chord chank, c = soft chank, x = muted scratch
+    const gtr = (bar, c, pat = 'xxCxxCxxCxxcxCxC') => { const [r, tn] = CH[c]; [...pat].forEach((ch, st) => {
+      if (ch === 'C' || ch === 'c') ev(bar, st, 'wah', tn, 1, ch === 'C' ? 0.95 : 0.6, false); else if (ch === 'x') ev(bar, st, 'scratch', r, 0.42);
+      else if (ch === 'W') ev(bar, st, 'wah', tn, 2, 0.95, true); }); };
+    const CL = [[1, 64, 1], [3, 67, 1], [4, 64, 1], [6, 69, 1], [7, 67, 1], [9, 71, 1], [10, 69, 1], [11, 67, 1], [13, 64, 1], [14, 62, 1], [15, 64, 1]];
+    const clav = (bar, v = .7) => { for (const [st, m] of CL) ev(bar, st, 'clav', m, v); };
+    const horn = (bar, ph, vel = 0.9) => { for (const [st, m, ln, fl] of ph) {
+      ev(bar, st, 'horn', m, ln, vel, true, fl === 'fall', fl === 'vib'); ev(bar, st, 'horn', m - 5, ln, vel * 0.62, true, fl === 'fall', fl === 'vib'); } };
+    const stab = (bar, c, steps, vel = 0.6) => { for (const st of steps) for (const m of CH[c][1].slice(1)) ev(bar, st, 'horn', m + 12, 1, vel, false, false, false); };
+    const HA = [[0, 71, 1], [2, 74, 1], [3, 76, 2], [6, 76, 1], [7, 74, 1], [8, 76, 1], [10, 79, 2], [12, 76, 1], [14, 74, 1], [15, 71, 1]];
+    const HB = [[0, 88, 1], [1, 86, 1], [2, 83, 3, 'fall'], [10, 76, 1], [11, 79, 1], [12, 76, 1], [14, 74, 2]];
+    const HC = [[0, 71, 1], [2, 74, 1], [3, 76, 2], [6, 79, 1], [7, 81, 1], [8, 82, 1], [9, 83, 3, 'vib'], [13, 81, 1], [14, 79, 1], [15, 76, 1]];
+    const HD = [[0, 79, 1], [1, 76, 1], [2, 74, 1], [3, 76, 3, 'vib'], [8, 0, 0], [10, 71, 1], [11, 74, 1], [12, 76, 2, 'fall']];
+    const SOLO = [
+      [[0, 76, 2, 74], [3, 79, 1], [4, 76, 1], [6, 74, 1], [7, 76, 1], [8, 79, 2, 78], [10, 81, 1], [11, 79, 1], [12, 76, 2], [14, 74, 1], [15, 71, 1]],
+      [[0, 76, 6, 75], [8, 71, 1], [9, 74, 1], [10, 76, 1], [11, 79, 1], [12, 81, 1], [13, 82, 1], [14, 83, 2, 81]],
+      [[0, 88, 3, 86], [4, 86, 1], [5, 83, 1], [6, 81, 1], [7, 79, 1], [8, 81, 1], [9, 79, 1], [10, 76, 1], [11, 74, 1], [12, 76, 4, 74]],
+      [[2, 71, 1], [3, 74, 1], [4, 76, 1], [6, 76, 1], [7, 76, 1], [8, 79, 2, 77], [10, 76, 1], [12, 74, 1], [13, 71, 1], [14, 69, 1], [15, 67, 1]],
+      [[0, 64, 2], [2, 67, 1], [3, 69, 1], [4, 70, 1], [5, 71, 3, 69], [10, 74, 1], [11, 76, 1], [12, 79, 4, 77]],
+      [[0, 83, 1], [1, 81, 1], [2, 83, 1], [3, 81, 1], [4, 79, 1], [5, 81, 1], [6, 79, 1], [7, 76, 1], [8, 79, 1], [9, 76, 1], [10, 74, 1], [11, 76, 1], [12, 74, 1], [13, 71, 1], [14, 69, 1], [15, 71, 1]],
+      [[0, 76, 1], [2, 76, 1], [3, 76, 1], [6, 79, 2, 78], [8, 76, 1], [10, 74, 2, 72], [12, 71, 4]],
+      [[0, 88, 8, 86], [10, 83, 1], [11, 81, 1], [12, 79, 1], [13, 76, 1], [14, 74, 1], [15, 71, 1]],
+    ];
+    const solo = (bar, notes) => { for (const [st, m, ln, bf] of notes) ev(bar, st, 'lead', m, ln, 0.8, bf ?? null, true); };
+    function bridge(shout) {
+      drums(bar, {}); slap(bar, 'A9', BA); gtr(bar, 'A9'); stab(bar, 'A9', [0, 3, 6, 10], .7); bar++;
+      drums(bar, { alt: true }); slap(bar, 'A9', BB); gtr(bar, 'A9');
+      if (shout) horn(bar, [[0, 79, 1], [2, 81, 2], [6, 79, 1], [7, 76, 1], [8, 79, 4, 'vib'], [14, 81, 2, 'fall']]); else stab(bar, 'A9', [0, 6, 12], .6); bar++;
+      drums(bar, {}); slap(bar, 'B9', BA); gtr(bar, 'B9'); stab(bar, 'B9', [0, 2, 4, 6, 8, 10, 12, 14], .55); bar++;
+      drums(bar, { roll: true }); slap(bar, 'B9', BS); for (let st = 8; st < 16; st++) stab(bar, 'B9', [st], 0.35 + 0.05 * (st - 8)); bar++;
+    }
+    let bar = 0;
+    for (let i = 0; i < 4; i++, bar++) {                        // intro: the drummer counts it in, then the bass drops
+      drums(bar, { fill: i === 3, snare: i < 2 ? 'light' : true }); if (i >= 2) slap(bar, 'E9', i === 2 ? BS : BB); if (i === 3) gtr(bar, 'E9', 'x.x.x.x.xxxxxxxx');
+    }
+    for (let i = 0; i < 8; i++, bar++) {                        // groove
+      drums(bar, { fill: i === 7, alt: i % 4 === 3 }); slap(bar, 'E9', i % 2 ? BB : BA); gtr(bar, 'E9'); if (i >= 4) stab(bar, 'E9', [0], .75);
+    }
+    function hook(pass) {
+      for (let i = 0; i < 8; i++, bar++) {
+        drums(bar, { fill: i === 7, bell: pass > 1 }); slap(bar, 'E9', i % 2 ? BB : BA); gtr(bar, 'E9'); clav(bar, .55);
+        const ph = [HA, HB, HC, HD][i % 4]; horn(bar, ph.filter(n => n[1] > 0));
+        if (pass === 3) for (const [st, m, ln] of ph) if (m) ev(bar, st, 'lead', m + 12, ln, 0.4, null, false);
+      }
+    }
+    hook(1);
+    for (let i = 0; i < 4; i++, bar++) {                        // clav break-out
+      drums(bar, { alt: true, fill: i === 3 }); slap(bar, 'E9', i % 2 ? BB : BA); gtr(bar, 'E9', 'x.xCx.xCx.xCx.xC'); clav(bar, .9);
+    }
+    bridge(false); hook(2);
+    for (let i = 0; i < 8; i++, bar++) {                        // breakdown: bass and kick, then the band creeps back
+      drums(bar, { snare: i >= 4 ? 'light' : false, hats: i >= 2, fill: i === 7 }); slap(bar, 'E9', i % 2 ? BB : BS);
+      if (i >= 4) gtr(bar, 'E9', i >= 6 ? 'xxCxxCxxCxxcxCxC' : 'x.x.x.x.x.x.x.x.'); if (i >= 2) ev(bar, 0, 'cowbell', .8);
+    }
+    for (let i = 0; i < 4; i++, bar++) {                        // drum break
+      drums(bar, { alt: i % 2 === 1, fill: i === 3 }); if (i >= 2) slap(bar, 'E9', BS);
+    }
+    for (let i = 0; i < 8; i++, bar++) {                        // squealing lead
+      drums(bar, { fill: i === 7, bell: i >= 4 }); slap(bar, 'E9', i % 2 ? BB : BA); gtr(bar, 'E9', 'xxCxxCxx.xxcxCx.'); solo(bar, SOLO[i]);
+    }
+    bridge(true); hook(3);
+    for (let i = 0; i < 4; i++, bar++) {                        // vamp out → back to the count-in
+      drums(bar, { fill: i === 3, bell: true }); slap(bar, 'E9', i % 2 ? BB : BA); gtr(bar, 'E9'); stab(bar, 'E9', i === 3 ? [0, 3, 6] : [0], .75);
+    }
+    return { EV, bars: bar };
+  }
+
+  // ───────── song 3: "Penthouse Lowdown" — slow-grind Dm9/G13 vamp, squelch bass, wakka wah, 96 BPM ─────────
+  function song3() {
+    const EV = [], ev = (bar, st, fn, ...a) => EV.push([bar, st, fn, a]);
+    const CH = { Dm9: [38, [65, 69, 72, 76]], G13: [43, [65, 71, 76]], Bbmaj7: [46, [62, 65, 69, 72]], 'A7#9': [45, [61, 67, 72]], Gm9: [43, [65, 69, 70, 74]], A7: [45, [61, 67, 73, 76]] };
+    const SQ = {
+      Dm9: [[0, 38, 3, 36], [6, 45, 1], [7, 48, 1], [8, 50, 2, 48], [11, 41, 1], [12, 43, 1], [14, 45, 1], [15, 48, 1]],
+      G13: [[0, 43, 3, 41], [6, 47, 1], [7, 50, 1], [8, 55, 2, 53], [11, 53, 1], [12, 52, 1], [14, 50, 1], [15, 49, 1]],
+    };
+    const sqGen = r => [[0, r, 3, r - 2], [3, r + 12, 1], [6, r + 7, 1], [8, r, 2], [10, r + 10, 1], [11, r + 12, 1], [13, r + 7, 1], [14, r + 5, 1], [15, r + 3, 1]];
+    const bass = (bar, c, v = 1) => { for (const [st, m, ln, fr] of (SQ[c] || sqGen(CH[c][0]))) ev(bar, st, 'squelch', m, ln, v * (st === 0 ? 1 : 0.85), fr ?? null); };
+    const K = [1, 0, 0, 0, 0, 0, 0, .7, 0, 0, 1, 0, 0, 0, 0, .4], S = [0, 0, 0, 0, 1, 0, .14, 0, 0, .2, 0, 0, 1, 0, .16, 0];
+    function drums(bar, o = {}) {
+      for (let st = 0; st < 16; st++) {
+        if (o.kick !== false && K[st]) ev(bar, st, 'kick', K[st]);
+        if (o.snare !== false && S[st]) ev(bar, st, 'snare', S[st]);
+        if (o.hats !== false) ev(bar, st, 'hat', st === 14 ? 0.5 : st % 2 ? 0.22 : 0.45, st === 14);
+      }
+      if (o.tamb) for (const st of [4, 12]) ev(bar, st, 'hat', 0.6, true);
+      if (o.fill) for (const [st, v] of [[12, .6], [13, .7], [14, .85], [15, 1]]) ev(bar, st, 'snare', v);
+    }
+    // wakka-chikka: W = wah chord stab, x = muted scratch
+    const gtr = (bar, c, pat = 'WxxWxWxxWxxWxWxW') => { const [r, tn] = CH[c]; [...pat].forEach((ch, st) => {
+      if (ch === 'W') ev(bar, st, 'wah', tn, 1.6, 0.9, true); else if (ch === 'x') ev(bar, st, 'scratch', r, 0.38); }); };
+    const keys = (bar, c, v = .8) => { ev(bar, 2, 'keys', CH[c][1], 5, v); ev(bar, 10, 'keys', CH[c][1], 4, v * .8); };
+    const lead = (bar, notes, v = .85) => { for (const [st, m, ln, fr, vb] of notes) ev(bar, st, 'synLead', m, ln, v, fr ?? null, vb !== false); };
+    const horn = (bar, ph, vel = .85) => { for (const [st, m, ln, fl] of ph) { ev(bar, st, 'horn', m, ln, vel, true, fl === 'fall', fl === 'vib'); ev(bar, st, 'horn', m - 4, ln, vel * .6, true, fl === 'fall', fl === 'vib'); } };
+    const HOOK = [
+      [[2, 69, 1], [3, 72, 1], [4, 74, 3, 72], [8, 77, 1], [9, 76, 1], [10, 74, 2], [12, 72, 1], [13, 69, 3]],
+      [[2, 71, 1], [3, 74, 1], [4, 77, 2, 76], [6, 76, 2], [8, 74, 6]],
+      [[0, 81, 2, 79], [3, 79, 1], [4, 77, 1], [5, 76, 1], [6, 74, 2], [9, 72, 1], [10, 74, 1], [11, 77, 1], [12, 76, 4]],
+      [[0, 74, 1], [1, 72, 1], [2, 69, 2], [6, 67, 1], [7, 69, 1], [8, 72, 1], [9, 74, 7]],
+    ];
+    const ANS = [null, [[12, 77, 1], [14, 76, 2, 'fall']], null, [[13, 81, 1], [14, 79, 2, 'fall']]];
+    const BRIDGE = [
+      [[0, 77, 4, null], [6, 76, 1], [7, 74, 1], [8, 72, 4]],
+      [[0, 73, 2], [2, 76, 1], [3, 79, 2], [6, 72, 2, 70], [10, 69, 4]],
+      [[0, 70, 2], [2, 74, 2], [4, 77, 4], [10, 74, 1], [11, 72, 1], [12, 70, 2], [14, 69, 2]],
+      [[0, 73, 3], [4, 76, 1], [5, 79, 1], [6, 81, 6], [14, 79, 1], [15, 76, 1]],
+    ];
+    const SOLO = [
+      [[0, 74, 2], [2, 77, 1], [3, 79, 1], [4, 81, 4, 79], [10, 79, 1], [11, 77, 1], [12, 76, 1], [13, 74, 3]],
+      [[2, 71, 1], [3, 74, 1], [4, 77, 1], [5, 79, 1], [6, 83, 4, 81], [12, 81, 2], [14, 79, 2]],
+      [[0, 86, 6, 84], [8, 84, 1], [9, 81, 1], [10, 79, 1], [11, 77, 1], [12, 79, 4, 77]],
+      [[0, 76, 2], [2, 77, 2], [4, 79, 2], [6, 81, 2], [8, 83, 6, 81]],
+      [[0, 84, 1], [1, 86, 1], [2, 84, 1], [3, 81, 1], [4, 79, 1], [5, 81, 1], [6, 79, 1], [7, 77, 1], [8, 76, 1], [9, 77, 1], [10, 76, 1], [11, 74, 1], [12, 72, 2], [14, 74, 2]],
+      [[0, 71, 3, 69], [4, 74, 1], [5, 77, 1], [6, 79, 2], [8, 83, 2], [10, 84, 2], [12, 86, 4, 84]],
+      [[0, 89, 4, 88], [4, 88, 1], [5, 86, 1], [6, 84, 1], [7, 81, 1], [8, 84, 2, 82], [10, 81, 1], [11, 79, 1], [12, 77, 4]],
+      [[0, 79, 2], [2, 81, 1], [3, 79, 1], [4, 77, 2], [6, 74, 2], [8, 72, 1], [9, 74, 7]],
+    ];
+    const VAMP = ['Dm9', 'G13'], BP = ['Bbmaj7', 'A7#9', 'Gm9', 'A7'];
+    let bar = 0;
+    for (let i = 0; i < 4; i++, bar++) {                        // intro: the bass struts in alone, then the drop
+      const c = VAMP[i % 2]; bass(bar, c); if (i < 2) drums(bar, { kick: false, snare: false }); else drums(bar, { fill: i === 3 });
+      if (i === 3) gtr(bar, c, 'x.x.x.x.WxWxWxWx');
+    }
+    for (let i = 0; i < 8; i++, bar++) {                        // groove
+      const c = VAMP[i % 2]; drums(bar, { fill: i === 7 }); bass(bar, c); gtr(bar, c); if (i >= 4) keys(bar, c);
+    }
+    function hook(pass) {
+      for (let i = 0; i < 8; i++, bar++) {
+        const c = VAMP[i % 2]; drums(bar, { fill: i === 7, tamb: pass > 1 }); bass(bar, c); gtr(bar, c); keys(bar, c, .6);
+        lead(bar, HOOK[i % 4]); if (pass === 3) for (const [st, m, ln] of HOOK[i % 4]) ev(bar, st, 'lead', m + 12, ln, .35, null, false);
+        if (ANS[i % 4]) horn(bar, ANS[i % 4]); if (pass > 1 && i % 4 === 2) horn(bar, [[14, 76, 2]], .6);
+      }
+    }
+    function bridge() {
+      BP.forEach((c, i) => { drums(bar, { fill: i === 3, tamb: true }); bass(bar, c); gtr(bar, c, 'W.xW.xW.W.xW.xW.'); keys(bar, c, .7); lead(bar, BRIDGE[i], .8);
+        horn(bar, [[0, CH[c][1][CH[c][1].length - 1] + 12, 8, 'vib']], .45); bar++; });
+    }
+    hook(1); bridge();
+    for (let i = 0; i < 4; i++, bar++) {                        // horns take a chorus
+      const c = VAMP[i % 2]; drums(bar, { fill: i === 3, tamb: true }); bass(bar, c); gtr(bar, c); keys(bar, c);
+      horn(bar, i % 2 ? [[0, 77, 1], [2, 77, 1], [3, 79, 2], [6, 76, 1], [8, 74, 4, 'vib'], [14, 72, 2, 'fall']] : [[0, 81, 2, 'fall'], [6, 77, 1], [7, 79, 1], [8, 81, 1], [10, 84, 2], [12, 81, 1], [14, 79, 2]]);
+    }
+    hook(2);
+    for (let i = 0; i < 8; i++, bar++) {                        // breakdown: squelch, kick and wah, then call and response
+      const c = VAMP[i % 2]; drums(bar, { snare: i >= 4, hats: i >= 2, fill: i === 7 }); bass(bar, c);
+      gtr(bar, c, i < 4 ? 'W...W...W..WW...' : 'WxxWxWxxWxxWxWxW');
+      if (i >= 4) (i % 2 ? horn(bar, [[8, 74, 1], [10, 77, 1], [12, 76, 2, 'fall']], .7) : lead(bar, [[0, 81, 2, 79], [3, 77, 1], [4, 74, 2], [8, 72, 1], [9, 74, 3]], .8));
+    }
+    for (let i = 0; i < 8; i++, bar++) {                        // synth solo
+      const c = VAMP[i % 2]; drums(bar, { fill: i === 7, tamb: i >= 4 }); bass(bar, c); gtr(bar, c); keys(bar, c, .5); lead(bar, SOLO[i], .9);
+    }
+    bridge(); hook(3);
+    for (let i = 0; i < 4; i++, bar++) {                        // fade-out vamp → back to the bass intro
+      const c = VAMP[i % 2]; drums(bar, { fill: i === 3, snare: i < 3 }); bass(bar, c); gtr(bar, c); if (i < 2) keys(bar, c, .5);
+    }
+    return { EV, bars: bar };
+  }
+  const SONGS = [
+    { title: 'TOP FLOOR STRUT', bpm: 106, swing: 0.16, build: song1 },
+    { title: 'ELEVATOR DOWN', bpm: 112, swing: 0.07, build: song2 },
+    { title: 'PENTHOUSE LOWDOWN', bpm: 96, swing: 0.2, build: song3 },
+  ].map(s => {
+    const { EV, bars } = s.build(), nseg = Math.ceil(bars / SEG), bySeg = Array.from({ length: nseg }, () => []);
+    for (const e of EV) bySeg[Math.floor(e[0] / SEG)].push(e);
+    const step = 60 / s.bpm / 4;
+    return { title: s.title, step, swing: s.swing, bars, nseg, bySeg, seconds: bars * step * 16 };
+  });
+  function use(s) { STEP = s.step; BAR = STEP * 16; SWING = s.swing; }
   // ---- render one 4-bar segment (plus a tail for ringing notes) to stereo floats ----
-  function renderSeg(k) {
+  function renderSeg(k, si = cur) {
+    const song = SONGS[si]; use(song);
     const n = Math.ceil((SEG * BAR + TAIL) * MSR);
     L = new Float32Array(n); R = new Float32Array(n);
     const b0 = k * SEG;
-    for (const [b, st, fn, a] of bySeg[k]) V[fn]((b - b0) * BAR + stepT(st), ...a);
+    for (const [b, st, fn, a] of song.bySeg[k]) V[fn]((b - b0) * BAR + stepT(st), ...a);
     const th = Math.tanh(1.25);
     for (let i = 0; i < n; i++) {
       L[i] = Math.round(Math.tanh(L[i] * MASTER * 1.25) / th * 128) / 128;
       R[i] = Math.round(Math.tanh(R[i] * MASTER * 1.25) / th * 128) / 128;
     }
-    const out = { L, R }; L = R = null; return out;
+    const out = { L, R, segSeconds: SEG * BAR }; L = R = null; return out;
   }
   // ---- playback: schedule segments a few seconds ahead; tails overlap naturally ----
-  let ctx = null, gain = null, timer = null, nextT = 0, seg = 0, live = [], duck = 1;
+  let ctx = null, timer = null, cur = 0, duck = 1, play = null;
   function tick() {
-    if (!ctx) return;
-    if (nextT < ctx.currentTime + 0.05) nextT = ctx.currentTime + 0.1;
-    while (nextT < ctx.currentTime + 5) {
-      const { L: l, R: r } = renderSeg(seg);
+    if (!ctx || !play) return;
+    if (play.nextT < ctx.currentTime + 0.05) play.nextT = ctx.currentTime + 0.1;
+    while (play.nextT < ctx.currentTime + 5) {
+      const { L: l, R: r, segSeconds } = renderSeg(play.seg, play.si);
       const buf = ctx.createBuffer(2, l.length, MSR);
       buf.copyToChannel(l, 0); buf.copyToChannel(r, 1);
-      const src = ctx.createBufferSource(); src.buffer = buf; src.connect(gain); src.start(nextT);
-      live.push(src); src.onended = () => { live = live.filter(s => s !== src); };
-      nextT += SEG * BAR; seg = (seg + 1) % NSEG;
+      const src = ctx.createBufferSource(), p = play; src.buffer = buf; src.connect(p.gain); src.start(p.nextT);
+      p.live.push(src); src.onended = () => { p.live = p.live.filter(s => s !== src); };
+      p.nextT += segSeconds; p.seg = (p.seg + 1) % SONGS[p.si].nseg;
     }
   }
+  function begin(at) {
+    const gain = ctx.createGain(); gain.gain.value = 0.0001; gain.connect(ctx.destination);
+    gain.gain.setTargetAtTime(VOL * duck, at, 0.03);
+    play = { si: cur, seg: 0, nextT: at, gain, live: [] };
+    tick();
+  }
+  function retire(p, fade) {
+    if (!p) return;
+    const t = ctx.currentTime;
+    p.gain.gain.cancelScheduledValues(t); p.gain.gain.setValueAtTime(p.gain.gain.value, t);
+    p.gain.gain.linearRampToValueAtTime(0.0001, t + fade);
+    setTimeout(() => { for (const s of p.live) { try { s.stop(); } catch (e) {} } p.live = []; p.gain.disconnect(); }, fade * 1000 + 80);
+  }
   return {
-    BARS, LOOP_SECONDS: BARS * BAR, renderSeg,
+    SONGS: SONGS.map(s => ({ title: s.title, bars: s.bars, seconds: s.seconds })), renderSeg,
+    get BARS() { return SONGS[cur].bars; }, get LOOP_SECONDS() { return SONGS[cur].seconds; },
     get playing() { return !!timer; },
+    get index() { return cur; }, get title() { return SONGS[cur].title; },
+    setSong(i) { cur = ((i % SONGS.length) + SONGS.length) % SONGS.length; },
     start(ac) {
       if (timer || !ac) return;
-      ctx = ac; gain = ctx.createGain(); gain.gain.value = VOL * duck; gain.connect(ctx.destination);
-      seg = 0; nextT = 0; tick(); timer = setInterval(tick, 400);
+      ctx = ac; begin(ctx.currentTime + 0.1); timer = setInterval(tick, 400);
+    },
+    // crossfade into the next track in the rotation
+    next() {
+      cur = (cur + 1) % SONGS.length;
+      if (!timer || !ctx) return SONGS[cur].title;
+      const old = play; retire(old, FADE); begin(ctx.currentTime + FADE * 0.6);
+      return SONGS[cur].title;
     },
     stop() {
       if (!timer) return;
       clearInterval(timer); timer = null;
-      for (const s of live) { try { s.stop(); } catch (e) {} }
-      live = []; if (gain) gain.disconnect(); gain = null;
+      if (play) { for (const s of play.live) { try { s.stop(); } catch (e) {} } play.gain.disconnect(); }
+      play = null;
     },
-    setDuck(d) { if (d === duck) return; duck = d; if (gain && ctx) gain.gain.setTargetAtTime(VOL * d, ctx.currentTime, 0.08); },
+    setDuck(d) { if (d === duck) return; duck = d; if (play && ctx) play.gain.gain.setTargetAtTime(VOL * d, ctx.currentTime, 0.08); },
   };
 })();
+// the three tracks rotate: a new one on every death, every new building, and every page load
+try { const n = +localStorage.getItem('liftprotocol.song'); Music.setSong(Number.isFinite(n) ? n : 0); localStorage.setItem('liftprotocol.song', String((Music.index + 1) % 3)); } catch (e) {}
+function songNext() {
+  const t = Music.next();
+  if (!G.muted && !G.musicOff && Music.playing) G.songBanner = { text: '♪ NOW PLAYING · ' + t, t: 2.6 };
+}
 
 // ───────────────────────────── elevators ─────────────────────────────
 function playerControls(s) {
@@ -842,6 +1148,7 @@ function killPlayer(how) {
 }
 function respawn() {
   const p = G.player;
+  songNext();
   if (G.lives <= 0) { startGameOver(); return; }
   const k = clamp(floorOfY(p.y), 0, N - 1);
   const side = p.x < (WL + WR) / 2 ? 'L' : 'R';
@@ -1160,6 +1467,7 @@ function updateFx(dt) {
   G.pops = G.pops.filter(q => q.t > 0);
   for (const fl of B.floors) for (const d of fl.doors) if (d.openT > 0) d.openT -= dt;
   if (G.banner) { G.banner.t -= dt; if (G.banner.t <= 0) G.banner = null; }
+  if (G.songBanner) { G.songBanner.t -= dt; if (G.songBanner.t <= 0) G.songBanner = null; }
   if (G.shake > 0) G.shake -= dt;
 }
 const floorLabel = k => (k === 0 ? 'GROUND' : 'FLOOR ' + k);
@@ -1412,10 +1720,14 @@ function drawPerson(e, pal, opt) {
   if (aim) { rect(x + (f > 0 ? 5 : -15), y - HIGH - 2, 10, 4, pal.coat); rect(x + (f > 0 ? 14 : -20), y - HIGH - 3, 6, 3, '#0a0a0a'); }
   else { rect(x + (f > 0 ? 3 : -7), y - 32 - tall, 4, 13, pal.coat); rect(x + (f > 0 ? 3 : -7), y - 20, 4, 3, pal.skin); }
 }
-// The agent: afro, shades, horseshoe mustache, long cognac leather coat with a shearling collar,
-// black turtleneck, gold buckle and plum bell-bottoms. Drawn facing right; R() mirrors for left.
-const HERO = { skin:'#6e4128', skinHi:'#8a5434', hair:'#150e0b', hairHi:'#2a1c15', coat:'#b8562a', coatHi:'#de7a3e', coatLo:'#7d3518',
-  fur:'#f0e3c4', furLo:'#c9b48c', turtle:'#16161d', pants:'#6a2d80', pantsLo:'#4b1f5c', shoe:'#2b1a10', buckle:'#f2c14e', shades:'#120c08', lens:'#f2b134' };
+// The agent: trimmed afro, shades, horseshoe mustache, long tan suede coat with wide brown lapels,
+// cream turtleneck, gold buckle and burgundy bell-bottoms. Drawn facing right; R() mirrors for left.
+const HERO = { skin:'#6e4128', skinHi:'#8a5434', hair:'#150e0b', hairHi:'#2a1c15', coat:'#9a6a3c', coatHi:'#b98552', coatLo:'#6e4724',
+  fur:'#6e4724', furLo:'#4f321a', turtle:'#efe4cc', pants:'#7a2230', pantsLo:'#561722', shoe:'#2b1a10', buckle:'#f2c14e', shades:'#120c08', lens:'#f2b134' };
+// wide 70s lapels (H.fur / H.furLo hold the lapel browns)
+function heroLapels(R, H, top) { R(-9, top - 1, 6, 5, H.fur); R(-9, top - 1, 2, 5, H.furLo); R(4, top, 5, 4, H.fur); R(1, top + 3, 3, 4, H.fur); R(5, top + 3, 2, 1, H.furLo); }
+// trimmed afro: rounded and centred over the head, no shelf hanging off the back
+function heroAfro(R, H, top) { R(-6, top + 2, 13, 8, H.hair); R(-5, top, 11, 2, H.hair); R(-7, top + 3, 1, 5, H.hair); R(7, top + 3, 1, 4, H.hair); R(-3, top + 1, 6, 1, H.hairHi); R(-5, top + 3, 2, 1, H.hairHi); }
 function drawHero(e, opt) {
   const x = Math.round(e.x), y = Math.round(e.y), f = e.face;
   const R = (dx, dy, w, h, c) => rect(f > 0 ? x + dx : x - dx - w, y + dy, w, h, c);
@@ -1426,12 +1738,12 @@ function drawHero(e, opt) {
     R(-10, -9, 6, 6, H.coatLo);
     R(-9, -23, 18, 15, H.coat); R(-9, -23, 2, 15, H.coatLo); R(6, -23, 1, 12, H.coatHi);
     R(2, -22, 3, 10, H.turtle); R(-9, -12, 18, 2, H.coatLo); R(2, -12, 3, 2, H.buckle);
-    R(-8, -26, 16, 4, H.fur); R(-9, -25, 2, 3, H.furLo);
+    heroLapels(R, H, -26);
     R(-4, -34, 9, 8, H.skin); R(4, -31, 1, 2, H.skin); R(-4, -33, 2, 5, H.hair);
-    R(-7, -43, 13, 10, H.hair); R(-8, -41, 15, 7, H.hair); R(-9, -39, 1, 5, H.hair); R(-5, -45, 9, 2, H.hair); R(6, -39, 1, 4, H.hair); R(-3, -44, 6, 1, H.hairHi);
+    heroAfro(R, H, -43);
     R(0, -32, 5, 2, H.shades); R(2, -32, 2, 1, H.lens);
     R(0, -29, 5, 1, H.hair); R(0, -28, 1, 2, H.hair); R(4, -28, 1, 2, H.hair);
-    R(4, -LOW - 3, 10, 4, H.coat); R(12, -LOW - 3, 2, 4, H.fur); R(13, -LOW - 4, 6, 3, '#0a0a0a');
+    R(4, -LOW - 3, 10, 4, H.coat); R(12, -LOW - 3, 2, 4, H.coatLo); R(13, -LOW - 4, 6, 3, '#0a0a0a');
     return;
   }
   const moving = Math.abs(e.vx) > 1, air = !e.grounded && !e.stair;
@@ -1454,17 +1766,17 @@ function drawHero(e, opt) {
   R(2, -35, 3, 12, H.turtle);
   R(-8, -23, 16, 2, H.coatLo); R(2, -23, 3, 2, H.buckle);
   R(-8, -14, 16, 2, H.coatLo);
-  // shearling collar + turtleneck
-  R(-8, -38, 16, 4, H.fur); R(-9, -37, 2, 3, H.furLo); R(6, -37, 2, 2, H.furLo);
+  // lapels + turtleneck
+  heroLapels(R, H, -38);
   R(-2, -39, 5, 2, H.turtle);
   // head, afro, sideburn
   R(-4, -47, 9, 9, H.skin); R(5, -43, 1, 2, H.skin); R(-2, -46, 2, 1, H.skinHi);
   R(-4, -46, 2, 6, H.hair);
-  R(-7, -56, 13, 10, H.hair); R(-8, -54, 15, 7, H.hair); R(-9, -52, 1, 6, H.hair); R(-5, -58, 9, 2, H.hair); R(6, -52, 1, 5, H.hair); R(-3, -57, 6, 1, H.hairHi); R(-6, -55, 2, 1, H.hairHi);
+  heroAfro(R, H, -56);
   // shades + horseshoe mustache
   R(0, -44, 5, 2, H.shades); R(2, -44, 2, 1, H.lens);
   R(0, -41, 5, 1, H.hair); R(0, -40, 1, 2, H.hair); R(4, -40, 1, 2, H.hair);
-  if (opt.aim) { R(4, -HIGH - 2, 10, 4, H.coat); R(12, -HIGH - 2, 2, 4, H.fur); R(14, -HIGH - 3, 6, 3, '#0a0a0a'); }
+  if (opt.aim) { R(4, -HIGH - 2, 10, 4, H.coat); R(12, -HIGH - 2, 2, 4, H.coatLo); R(14, -HIGH - 3, 6, 3, '#0a0a0a'); }
   else {
     // front arm: confident swing in time with the stride, relaxed at the hip when standing
     const fs = Math.round(st * 5), mid = Math.round(fs / 2);
@@ -1694,7 +2006,7 @@ function drawTitle() {
   const blink = Math.sin(G.t * 5) > -0.25;
   const wantMusic = !G.muted && !G.musicOff;
   const prompt = wantMusic && !G.titleWoke ? 'PRESS ANY KEY' : 'PRESS START';
-  const sub = wantMusic && !G.titleWoke ? '♪ drop the needle on the funk' : (wantMusic ? '♪ now playing: top floor strut' : 'ENTER · SPACE · FIRE · CLICK');
+  const sub = wantMusic && !G.titleWoke ? '♪ drop the needle on the funk' : (wantMusic ? '♪ now playing: ' + Music.title.toLowerCase() : 'ENTER · SPACE · FIRE · CLICK');
   if (compact) {
     const ph = CH - 92, pw = Math.round(ph * 1074 / 1465), px = Math.round((CW - pw) / 2), py = 12;
     rect(px - 4, py - 4, pw + 8, ph + 8, '#000');
@@ -1728,6 +2040,12 @@ function drawTitle() {
   text(sub, cx, 534, 10, '#8d8ca6', 'center');
 }
 function drawOverlays() {
+  if (G.songBanner && G.state !== 'title') {
+    const sb = G.songBanner; ctx.globalAlpha = Math.min(1, sb.t * 2, (2.6 - sb.t) * 4);
+    ctx.font = '700 10px ' + FONT; const w = ctx.measureText(sb.text).width + 20, y = CH - 30;
+    rect(12, y, w, 20, 'rgba(5,6,12,.85)'); rect(12, y + 18, w, 2, '#f7a531');
+    text(sb.text, 22, y + 14, 10, '#f5d23a', 'left', 700); ctx.globalAlpha = 1;
+  }
   if (G.banner && G.state === 'play') {
     ctx.font = '700 12px ' + FONT; const w = ctx.measureText(G.banner.text).width + 28;
     ctx.globalAlpha = Math.min(1, G.banner.t * 3);
