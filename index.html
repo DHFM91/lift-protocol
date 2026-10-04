@@ -53,7 +53,7 @@ kbd{font-family:var(--display);font-size:11px;color:var(--ink);border:1px solid 
     <div class="pad right"><button class="b-jump" data-k="jump">JUMP</button><button class="b-fire" data-k="fire">FIRE</button></div>
   </div>
   <div class="legend">
-    <div><b>Move</b> <kbd>←</kbd> <kbd>→</kbd> or <kbd>A</kbd> <kbd>D</kbd><br><b>Duck</b> <kbd>↓</kbd> &nbsp; <b>Jump</b> <kbd>Z</kbd> / <kbd>Space</kbd><br><b>Fire</b> <kbd>X</kbd> / <kbd>J</kbd> (3 shots on screen)</div>
+    <div><b>Move</b> <kbd>←</kbd> <kbd>→</kbd> or <kbd>A</kbd> <kbd>D</kbd><br><b>Duck</b> <kbd>↓</kbd> &nbsp; <b>Jump</b> <kbd>Z</kbd> / <kbd>Space</kbd><br><b>Fire</b> <kbd>click</kbd> or <kbd>X</kbd> / <kbd>J</kbd> (3 shots on screen)</div>
     <div><b>Stairs</b> stand at a building edge, hold <kbd>↑</kbd> / <kbd>↓</kbd><br><b>Lift</b> step inside a stopped car, hold <kbd>↑</kbd> / <kbd>↓</kbd><br><b>Red door</b> stand in front, <kbd>↑</kbd> to grab the file<br><b>Blue door</b> <kbd>↑</kbd> to hide inside, <kbd>↓</kbd> to step out</div>
     <div><b>Tricks</b> duck under high shots, jump low ones; jump into enemies to kick; jump-fire at a lamp to drop it; lower a car onto anyone in the pit, or carry them on its roof into the shaft ceiling.<br><kbd>P</kbd> pause &nbsp; <kbd>M</kbd> sound &nbsp; <kbd>N</kbd> music</div>
   </div>
@@ -224,7 +224,10 @@ function supportNear(e, y, tol) {
       if (Math.abs(cb - y) <= tol) return { y: cb, car: s };
       const rf = cb - FH;
       if (Math.abs(rf - y) <= tol) {
-        if (isInt(s.pos) && solidAt(e.x, Math.round(s.pos) + 1)) return { y: rf, car: null };
+        // a solid floor right here (the floor above the shaft head) wins over a passing car roof,
+        // so people walking over the top of a shaft never get scooped up by the car below
+        const kf = Math.round(s.pos) + 1;
+        if (solidAt(e.x, kf) && Math.abs(floorY(kf) - y) <= tol) return { y: floorY(kf), car: null };
         return { y: rf, car: s };
       }
     }
@@ -244,8 +247,8 @@ function landingSurface(e, y0, y1) {
       if (cb >= y0 - 0.01 && cb <= y1 && (!best || cb < best.y)) best = { y: cb, car: s };
       const rf = cb - FH;
       if (rf >= y0 - 0.01 && rf <= y1 && (!best || rf < best.y)) {
-        const solid = isInt(s.pos) && solidAt(e.x, Math.round(s.pos) + 1);
-        best = { y: rf, car: solid ? null : s };
+        const kf = Math.round(s.pos) + 1, solid = solidAt(e.x, kf) && Math.abs(floorY(kf) - rf) <= 2.5;
+        best = solid ? { y: floorY(kf), car: null } : { y: rf, car: s };
       }
     }
   }
@@ -436,7 +439,22 @@ addEventListener('keydown', e => {
 });
 addEventListener('keyup', e => { const k = KEYMAP[e.code]; if (k) { keys[k] = false; e.preventDefault(); } });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; if (G.state === 'play') G.paused = true; });
-cv.addEventListener('pointerdown', () => { cv.focus(); audioInit(); if (!(G.state === 'gameover' && LB.phase === 'enter')) pressed.start = true; });
+// go silent whenever the game isn't on screen (background tab, minimized window, hidden pane), and resume on return
+document.addEventListener('visibilitychange', () => {
+  if (!AC) return;
+  if (document.hidden) { if (G.state === 'play') G.paused = true; AC.suspend(); }
+  else if (!G.muted) AC.resume();
+});
+addEventListener('pagehide', () => { if (AC) { Music.stop(); AC.close(); AC = null; } });
+cv.addEventListener('pointerdown', ev => {
+  cv.focus(); audioInit();
+  if (G.state === 'gameover' && LB.phase === 'enter') return;
+  // on PC a left click fires the gun during play; everywhere else (and on touch) it acts as START
+  if (G.state === 'play' && ev.pointerType !== 'touch' && ev.button === 0) { ev.preventDefault(); if (!keys.fire) pressed.fire = true; keys.fire = true; }
+  else pressed.start = true;
+});
+addEventListener('pointerup', () => { keys.fire = false; });
+cv.addEventListener('contextmenu', ev => { if (G.state === 'play') ev.preventDefault(); });
 document.querySelectorAll('#touch button').forEach(b => {
   const k = b.dataset.k;
   const on = ev => { ev.preventDefault(); audioInit(); if (!keys[k]) pressed[k] = true; keys[k] = true; b.classList.add('on'); if (G.state !== 'play' && G.state !== 'gameover') pressed.start = true; };
@@ -2033,7 +2051,7 @@ function drawTitle() {
     ['Each building is taller and meaner.', '#9fd3ff'],
   ];
   brief.forEach((l, i) => text(l[0], cx, 172 + i * 22, 11, l[1], 'center'));
-  const ctl = [['← →', 'MOVE'], ['↑ ↓', 'LIFT · STAIRS · DOORS'], ['Z / SPACE', 'JUMP'], ['X', 'FIRE'], ['↓', 'DUCK'], ['P', 'PAUSE'], ['M / N', 'SOUND / MUSIC']];
+  const ctl = [['← →', 'MOVE'], ['↑ ↓', 'LIFT · STAIRS · DOORS'], ['Z / SPACE', 'JUMP'], ['CLICK / X', 'FIRE'], ['↓', 'DUCK'], ['P', 'PAUSE'], ['M / N', 'SOUND / MUSIC']];
   ctl.forEach((c, i) => { const y = 316 + i * 19; text(c[0], cx - 10, y, 10, '#f5d23a', 'right', 700); text(c[1], cx + 10, y, 10, '#8d8ca6'); });
   if (G.hi) text('HI-SCORE  ' + G.hi, cx, 470, 11, '#7cc04a', 'center', 700);
   if (blink) text(prompt, cx, 512, 24, '#f5d23a', 'center', 700);
