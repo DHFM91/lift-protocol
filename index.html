@@ -45,7 +45,7 @@ kbd{font-family:var(--display);font-size:11px;color:var(--ink);border:1px solid 
 <div class="wrap">
   <header>
     <h1>LIFT PROTOCOL</h1>
-    <div class="tag">Infiltrate the tower from the roof, ride the lifts, crack every red door for the secret files, then reach the getaway car on the ground floor.</div>
+    <div class="tag">Infiltrate the tower from the roof, ride the lifts, crack every red door for the secret files, then get in the getaway car parked on the ground floor.</div>
   </header>
   <div class="stage"><canvas id="game" tabindex="0" aria-label="Lift Protocol game"></canvas></div>
   <div class="touch" id="touch">
@@ -57,7 +57,7 @@ kbd{font-family:var(--display);font-size:11px;color:var(--ink);border:1px solid 
   </div>
   <div class="legend">
     <div><b>Move</b> <kbd>←</kbd> <kbd>→</kbd> or <kbd>A</kbd> <kbd>D</kbd><br><b>Duck</b> <kbd>↓</kbd> &nbsp; <b>Jump</b> <kbd>Z</kbd> / <kbd>Space</kbd><br><b>Fire</b> <kbd>click</kbd> or <kbd>X</kbd> / <kbd>J</kbd> (3 shots on screen)</div>
-    <div><b>Stairs</b> stand at a building edge, hold <kbd>↑</kbd> / <kbd>↓</kbd><br><b>Lift</b> step inside a stopped car, hold <kbd>↑</kbd> / <kbd>↓</kbd><br><b>Red door</b> stand in front, <kbd>↑</kbd> to grab the file<br><b>Blue door</b> <kbd>↑</kbd> to hide inside, <kbd>↓</kbd> to step out</div>
+    <div><b>Stairs</b> stand at a building edge, hold <kbd>↑</kbd> / <kbd>↓</kbd><br><b>Lift</b> step inside a stopped car, hold <kbd>↑</kbd> / <kbd>↓</kbd><br><b>Red door</b> stand in front, <kbd>↑</kbd> to grab the file<br><b>Blue door</b> <kbd>↑</kbd> to hide inside, <kbd>↓</kbd> to step out; a green ✓ means it's cleared (no more spawns, still a hiding spot)<br><b>Getaway car</b> once every file is taken, stand by the car and <kbd>↑</kbd> to get in</div>
     <div><b>Tricks</b> duck under high shots, jump low ones; jump into enemies to kick; jump-fire at a lamp to drop it; lower a car onto anyone in the pit, or carry them on its roof into the shaft ceiling.<br><kbd>P</kbd> pause &nbsp; <kbd>M</kbd> sound &nbsp; <kbd>N</kbd> music</div>
   </div>
 </div>
@@ -81,7 +81,7 @@ function layout() {
 layout();
 addEventListener('resize', () => { const was = compact; const w = cv.parentElement.clientWidth || 1040; if ((w < 700) !== was) layout(); });
 
-const WL = 20, WR = 820, FH = 96, SLAB = 10, SW = 52, STAIRZ = 84, SKY = 190, STREET = 120;
+const WL = 20, WR = 820, FH = 96, SLAB = 10, SW = 52, STAIRZ = 84, SKY = 190, STREET = 120, CARW = 92;
 const GRAV = 1800, JUMPV = 395, PSPD = 150;
 const HIGH = 32, LOW = 12, STAND_H = 44, DUCK_H = 26;
 const FONT = "Silkscreen, 'Courier New', monospace";
@@ -152,9 +152,9 @@ function genBuilding(level, s) {
   };
   for (let k = 0; k < N; k++) {
     const fl = { doors: [], lamps: [], dark: false, darkT: 0, taken: [] };
-    if (k === 0) {
-      const x = place(0, 34, fl.taken, 30);
-      if (x != null) { Bd.exit = { x, w: 34, k: 0 }; fl.taken.push([x, x + 34]); }
+    if (k === 0) {                                           // the getaway car is parked inside the ground-floor lobby
+      let x = place(0, CARW, fl.taken, 30); if (x == null) x = place(0, CARW, fl.taken, 4);
+      if (x != null) { Bd.exit = { x, w: CARW, k: 0, dir: x + CARW / 2 < (WL + WR) / 2 ? -1 : 1 }; fl.taken.push([x, x + CARW]); }
     }
     const nb = ri(1, level > 3 ? 3 : 2);
     for (let i = 0; i < nb; i++) {
@@ -163,7 +163,7 @@ function genBuilding(level, s) {
     }
     Bd.floors.push(fl);
   }
-  if (!Bd.exit) Bd.exit = { x: WL + STAIRZ + 20, w: 34, k: 0 };
+  if (!Bd.exit) Bd.exit = { x: WL + STAIRZ + 20, w: CARW, k: 0, dir: -1 };
   // red doors (secret files)
   const nRed = Math.min(2 + Math.floor(level * 0.7), Math.floor(N / 2));
   const fls = []; for (let k = 0; k < N - 1; k++) fls.push(k);
@@ -1182,8 +1182,10 @@ const Music = (() => {
     ];
     const sax = (bar, notes) => { for (const [st, m, ln, fr] of notes) ev(bar, st, 'sax', m - 12, ln, .9, fr != null ? fr - 12 : null, ln >= 3); };
     let bar = 0;
-    for (let i = 0; i < 4; i++, bar++) {                    // guitar alone, then drums, then the bass drops on the one
-      gtr(bar); if (i >= 1) drums(bar, { kick: i >= 2, fill: i === 3 }); if (i >= 2) bass(bar, i % 2 ? BB : BA);
+    for (let i = 0; i < 4; i++, bar++) {                    // no warm-up: the whole band slams in on the very first beat
+      drums(bar, { fill: i === 3 }); bass(bar, i % 2 ? BB : BA); gtr(bar);
+      if (i === 0) { ev(bar, 0, 'organ', CH.Dm9, 4, .85); for (const m of [74, 77, 81]) ev(bar, 0, 'horn', m, 2, .85, true, true, false); ev(bar, 0, 'crack', 1); }
+      if (i === 2) ev(bar, 0, 'organ', CH.Dm9, 2, .7);
     }
     for (let i = 0; i < 8; i++, bar++) { drums(bar, { fill: i === 7 }); bass(bar, i % 2 ? BB : BA); gtr(bar); if (i >= 4 && i % 2 === 0) ev(bar, 0, 'organ', CH.Dm9, 2, .7); }
     function hook() { for (let i = 0; i < 8; i++, bar++) { drums(bar, { fill: i === 7 }); bass(bar, i % 2 ? BB : BA); gtr(bar); horn(bar, HOOK[i % 4]); } }
@@ -1436,7 +1438,7 @@ function updatePlayer(dt) {
       if (d) { d.open = true; d.openT = 0.7; p.door = { d, t: 0.75 }; sfx('door'); return; }
       const bd = pressed.up && B.floors[k].doors.find(d => d.type === 'blue' && d.openT <= 0 && Math.abs(d.x + d.w / 2 - p.x) < 14);
       if (bd) { p.hide = { d: bd }; bd.used = true; p.x = bd.x + bd.w / 2; bd.openT = 0.35; p.vx = 0; sfx('door'); return; }
-      if (k === 0 && G.cleared && Math.abs(B.exit.x + B.exit.w / 2 - p.x) < 16) { G.state = 'escape'; G.escapeT = 2.6; p.door = { d: B.exit, t: 99 }; sfx('clear'); return; }
+      if (k === 0 && G.cleared && Math.abs(B.exit.x + B.exit.w / 2 - p.x) < B.exit.w / 2 + 4) { G.state = 'escape'; G.escapeT = 2.6; p.door = { d: B.exit, t: 99 }; sfx('clear'); return; }
     }
     if (keys.down && !inCar) {
       const side = stairAvail(p, -1);
@@ -1806,14 +1808,6 @@ function drawStreet() {
   rect(0, y, VW, STREET + 40, '#15161f');
   rect(0, y + SLAB, VW, 16, '#3a3b46'); rect(0, y + SLAB + 16, VW, 3, '#55566a');
   for (let x = 10; x < VW; x += 70) rect(x, y + 70, 36, 4, '#7d7a55');
-  // getaway car
-  const ex = B.exit.x + B.exit.w / 2;
-  let cx = ex - 40;
-  if (G.state === 'escape') cx += Math.max(0, (2.0 - G.escapeT)) * 420;
-  const cy = y + 34;
-  rect(cx, cy + 10, 96, 20, '#b0262d'); rect(cx + 18, cy, 52, 14, '#b0262d'); rect(cx + 24, cy + 3, 18, 9, '#9fd3ff'); rect(cx + 46, cy + 3, 18, 9, '#9fd3ff');
-  rect(cx + 12, cy + 26, 16, 12, '#0c0c0c'); rect(cx + 66, cy + 26, 16, 12, '#0c0c0c'); rect(cx + 90, cy + 14, 6, 5, '#ffe9a0');
-  if (G.cleared && G.state !== 'escape' && Math.sin(G.t * 6) > 0) rect(cx + 90, cy + 14, 12, 5, '#fff6cf');
 }
 function drawFloor(k) {
   const fy = floorY(k), top = fy - FH + SLAB;
@@ -1852,7 +1846,7 @@ function drawDoor(d, fy) {
     }
     else {
       rect(x, y, w, h, '#3566d1'); rect(x + 4, y + 5, w - 8, 18, '#4479e6'); rect(x + 4, y + 28, w - 8, 18, '#4479e6'); rect(x + w - 7, y + 26, 3, 3, '#cfd8ff');
-      if (d.used) { rect(x - 2, y + 24, w + 4, 4, '#8a6a3c'); rect(x - 2, y + 24, w + 4, 1, '#b8925a'); rect(x + 3, y + 23, 2, 6, '#3a2a14'); rect(x + w - 5, y + 23, 2, 6, '#3a2a14'); }  // barred: no more spawns
+      if (d.used) drawCleared(x + w / 2, y - 9);   // checked: cleared room, no more spawns, still a hiding spot
     }
   } else {
     if (d.open) { rect(x, y, w, h, d.openT > 0 ? '#05060a' : '#3a1f22'); rect(x, y, 5, h, '#7a3036'); }
@@ -1864,14 +1858,34 @@ function drawDoor(d, fy) {
     }
   }
 }
+function drawCleared(cx, cy) {
+  rect(cx - 6, cy - 5, 12, 11, '#0c2414'); rect(cx - 5, cy - 6, 10, 13, '#0c2414');
+  rect(cx - 5, cy - 4, 10, 9, '#2fae58');
+  const g = '#e9ffe9'; rect(cx - 3, cy, 2, 2, g); rect(cx - 1, cy + 1, 2, 2, g); rect(cx + 1, cy - 1, 2, 2, g); rect(cx + 2, cy - 3, 2, 2, g);
+}
+// the getaway car, parked in the ground-floor lobby; once the files are in hand its lights come on and it's the way out
 function drawExit(fy) {
-  const d = B.exit, x = d.x, w = d.w, h = 56, y = fy - h;
-  rect(x - 4, y - 14, w + 8, h + 14, '#101a12');
-  const open = G.cleared;
-  rect(x, y, w, h, open ? '#123d1f' : '#2a2f2c');
-  if (open) { ctx.globalAlpha = 0.4 + 0.3 * Math.sin(G.t * 5); rect(x, y, w, h, '#3fd06a'); ctx.globalAlpha = 1; }
-  rect(x - 2, y - 12, w + 4, 10, open ? '#3fd06a' : '#44504a'); text('EXIT', x + w / 2, y - 4, 8, '#05060a', 'center', 700);
-  if (!open) { for (let i = 0; i < 4; i++) rect(x + 3, y + 8 + i * 12, w - 6, 3, '#4a524d'); }
+  const d = B.exit, ready = G.cleared, dir = d.dir;
+  let x = d.x;
+  if (G.state === 'escape') { const t = Math.max(0, 2.1 - G.escapeT); x += dir * t * t * 260; }
+  // garage door in the side wall it drives out through
+  const gx = dir < 0 ? WL - 14 : WR - 6, gy = fy - 52;
+  rect(gx, gy, 20, 52, G.state === 'escape' ? '#05060a' : '#2a2c38'); if (G.state !== 'escape') for (let i = 0; i < 6; i++) rect(gx + 2, gy + 4 + i * 8, 16, 2, '#3a3d4d');
+  // car (drawn facing the way it will drive)
+  const W = d.w, cy = fy - 34, F = (dx, dy, w, h, c) => rect(dir > 0 ? x + dx : x + W - dx - w, cy + dy, w, h, c);
+  if (ready && G.state !== 'escape') { ctx.globalAlpha = 0.25 + 0.2 * Math.sin(G.t * 5); rect(x - 6, cy - 6, W + 12, 40, '#3fd06a'); ctx.globalAlpha = 1; }
+  F(0, 12, W, 16, '#b0262d'); F(16, 1, 50, 13, '#b0262d'); F(2, 10, W - 4, 3, '#d8434a');
+  F(21, 4, 19, 8, '#9fd3ff'); F(43, 4, 19, 8, '#9fd3ff'); F(41, 4, 2, 8, '#7a1c22');
+  F(W - 6, 15, 6, 5, ready ? '#fff6cf' : '#8a7a50'); F(0, 15, 4, 4, '#ff5148');
+  F(10, 24, 16, 10, '#0c0c0c'); F(W - 28, 24, 16, 10, '#0c0c0c'); F(15, 28, 6, 3, '#777'); F(W - 23, 28, 6, 3, '#777');
+  if (ready && G.state !== 'escape' && Math.sin(G.t * 6) > 0) { F(W, 14, 14, 7, 'rgba(255,246,207,0.55)'); }
+  // sign above it
+  const pl = G.player, near = ready && pl && floorOf(pl) === 0 && Math.abs(d.x + W / 2 - pl.x) < W / 2 + 4;
+  if (G.state !== 'escape' && !near) {
+    const sx = d.x + W / 2, sy = cy - 16;
+    rect(sx - 30, sy - 10, 60, 12, ready ? '#3fd06a' : '#2a2f2c');
+    text(ready ? 'GETAWAY' : 'LOCKED', sx, sy - 1, 8, ready ? '#05060a' : '#6b736e', 'center', 700);
+  }
 }
 function drawStairs(g, side) {
   const { bot, top } = stairPoints(g, side);
@@ -2108,7 +2122,7 @@ function render() {
     const bd = B.floors[k].doors.find(d => d.type === 'blue' && Math.abs(d.x + d.w / 2 - p.x) < 14);
     if (d) hint('▲ FILE', p.x, p.y - 62);
     else if (bd) hint('▲ HIDE', p.x, p.y - 62);
-    else if (k === 0 && G.cleared && Math.abs(B.exit.x + B.exit.w / 2 - p.x) < 16) hint('▲ ESCAPE', p.x, p.y - 62);
+    else if (k === 0 && G.cleared && Math.abs(B.exit.x + B.exit.w / 2 - p.x) < B.exit.w / 2 + 4) hint('▲ GET IN', p.x, p.y - 62);
     else if (stairAvail(p, 1) && stairAvail(p, -1)) hint('▲▼ STAIRS', p.x, p.y - 62);
     else if (stairAvail(p, 1)) hint('▲ STAIRS', p.x, p.y - 62);
     else if (stairAvail(p, -1)) hint('▼ STAIRS', p.x, p.y - 62);
@@ -2157,7 +2171,7 @@ function drawPanel() {
     if (B.stairs[k] && B.stairs[k].R) rect(mx + mw - 4, Y(k) + 1, 3, rh - 2, '#6f6a5c');
     for (const d of B.floors[k].doors) if (d.type === 'red' && !d.open) rect(X(d.x + 10), Y(k) + 2, 4, rh - 4, '#e6524f');
   }
-  rect(X(B.exit.x + 12), Y(0) + 2, 5, rh - 4, G.cleared ? '#7ee08a' : '#44504a');
+  rect(X(B.exit.x + 6), Y(0) + 3, Math.max(6, X(B.exit.x + B.exit.w - 6) - X(B.exit.x + 6)), rh - 6, G.cleared ? '#7ee08a' : '#44504a');
   for (const s of B.shafts) {
     rect(X(s.x + 20), Y(s.hi), 4, (s.hi - s.lo + 1) * rh - 1, '#070810');
     rect(X(s.x + 18), my + (N - 1 - s.pos) * rh + 1, 7, rh - 3, '#c79a3a');
