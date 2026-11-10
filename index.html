@@ -368,8 +368,9 @@ function banner(text, t, color) { G.banner = { text, t, color: color || '#f2b134
 function saveHi() { try { localStorage.setItem('liftprotocol.hi', String(G.hi)); } catch (e) {} }
 
 // ───────────────────────────── global leaderboard ─────────────────────────────
-// Shared top 10 stored in a public JSON bin (same service as Zippy's board). Entries: {n: initials, s: score, b: building reached}.
-const LB_URL = 'https://json.extendsclass.com/bin/efc74902cddf';
+// Shared top 10 stored in a JSON bin on the owner's account (the old anonymous bin hit its lifetime request cap).
+// Entries: {n: initials, s: score, b: building reached}.
+const LB_URL = 'https://json.extendsclass.com/bin/b0c978e245be';
 const lbReadJson = async r => { const t = await r.text(), i = t.search(/<!doctype|<html/i); return JSON.parse(i < 0 ? t : t.slice(0, i)); }; // the score host sometimes tacks a web page onto its reply; read only the JSON part
 const LB_SIZE = 10;
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
