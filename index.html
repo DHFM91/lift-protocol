@@ -370,6 +370,7 @@ function saveHi() { try { localStorage.setItem('liftprotocol.hi', String(G.hi));
 // ───────────────────────────── global leaderboard ─────────────────────────────
 // Shared top 10 stored in a public JSON bin (same service as Zippy's board). Entries: {n: initials, s: score, b: building reached}.
 const LB_URL = 'https://json.extendsclass.com/bin/efc74902cddf';
+const lbReadJson = async r => { const t = await r.text(), i = t.search(/<!doctype|<html/i); return JSON.parse(i < 0 ? t : t.slice(0, i)); }; // the score host sometimes tacks a web page onto its reply; read only the JSON part
 const LB_SIZE = 10;
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 const LB = { list: [], offline: false, phase: null, ini: [0, 0, 0], slot: 0, highlight: -1, wait: 0, msg: '' };
@@ -385,7 +386,7 @@ async function lbFetch() {
   try {
     const r = await fetch(LB_URL, { cache: 'no-store', signal: ctl ? ctl.signal : undefined });
     if (!r.ok) throw new Error('http ' + r.status);
-    LB.list = lbClean(await r.json()); LB.offline = false;
+    LB.list = lbClean(await lbReadJson(r)); LB.offline = false;
     try { localStorage.setItem('liftprotocol.board', JSON.stringify(LB.list)); } catch (e) {}
   } catch (e) {
     LB.offline = true;
